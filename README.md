@@ -1,8 +1,10 @@
-# 🐶 Dogear
+# Dogear
 
-**Mark it now, ask about it later.** Select text on any page, attach a query to each
-selection, and batch-submit them all to ChatGPT or Claude as one composed prompt — the
-GitHub PR-review model ("pending comments → submit review") applied to AI Q&A.
+When reading a webpage or an AI agent’s response, you’ll often come across sections that raise questions or need changes. You may want to highlight those parts and add a question, comment, or edit request.
+
+Some web-based tools and coding agent chatbots already let you select text and ask about it directly. But each time you send a request, the model’s response interrupts your reading flow. When you have several questions, you usually have to submit them one by one.
+
+Dogear solves this problem. You can mark every section you want to revisit, write your questions or edit requests alongside them, and send everything to the model at once. There’s no need to manually copy the selected text, keep track of where it came from, or submit each request separately.
 
 Two extensions live in this repo, sharing the same theme, prompt templates, and
 queue model:
