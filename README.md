@@ -4,11 +4,13 @@
 selection, and batch-submit them all to ChatGPT or Claude as one composed prompt — the
 GitHub PR-review model ("pending comments → submit review") applied to AI Q&A.
 
-See [PRD.md](PRD.md) for the full product spec. Two extensions live here:
+Two extensions live in this repo, sharing the same theme, prompt templates, and
+queue model:
 
 - [`extension/`](extension/) — the Chrome extension (this README)
-- [`vscode/`](vscode/) — the VSCode extension: same workflow inside your editor,
-  batch-sending to Claude Code or Codex ([its README](vscode/README.md))
+- [`vscode/`](vscode/) — the VS Code extension, for querying code and text
+  right inside your editor (see [VS Code extension](#vs-code-extension) below,
+  or [its own README](vscode/README.md) for full details)
 
 ## Install (developer mode)
 
@@ -50,6 +52,37 @@ query also records its **PDF page number** (included in the composed prompt).
 URLs), or skip the toggle entirely by using the viewer's own *Open file*
 toolbar button to pick the file.
 
+## VS Code extension
+
+The same select-and-queue workflow, inside your editor, sending batches to
+**Claude Code** or **Codex** instead of a browser chat tab.
+
+1. Select code or text in any editor → press `⌃⌥Q` (Mac) / `Ctrl+Alt+Q`
+   (Windows/Linux), or right-click → **Dogear: Add query for selection**.
+2. Type your query (or leave it empty to fill in later) and press Enter. The
+   selection is highlighted and the query lands in the queue — badge on the
+   Dogear icon in the Activity Bar.
+3. Repeat across as many files as you like. The queue is **per-workspace** and
+   survives restarts, so questions about one repo never bleed into another.
+4. Open the Dogear sidebar to edit, reorder (drag cards or whole file groups),
+   or delete queries. Click a file header to jump back to the anchored code.
+5. Deliver the batch:
+   - **→ Claude Code / → Codex** places the composed prompt in a matching CLI
+     terminal (reusing one if it's already open) and waits for you to press
+     Enter — it doesn't send on your behalf.
+   - **Copy prompt** puts it on the clipboard for anywhere else.
+
+It also supports capturing selections from VS Code's Markdown preview and from
+the Codex/Claude Code chat webviews via right-click, though those captures are
+excerpt-only (no persistent highlight, since VS Code isolates webviews from
+other extensions).
+
+Install: `cd vscode && npm install && npm run build`, then either press `F5` in
+that folder to run it from source, or package it with `npx @vscode/vsce
+package` and `code --install-extension dogear-vscode-0.1.0.vsix`. Full details,
+including why delivery goes through the CLIs rather than the chat panels
+directly, are in [`vscode/README.md`](vscode/README.md).
+
 ## Current limitations (Phase 0)
 - **Browser-reserved pages**: Chrome forbids all extensions from running on
   `chrome://` pages (settings, extensions, history), the Chrome Web Store, and
@@ -63,8 +96,7 @@ toolbar button to pick the file.
 - Highlights re-anchor by quote + context; on heavily dynamic pages a highlight may
   fail to re-attach after reload (the selected text is embedded in the prompt regardless,
   so your queries still work).
-- No answer mapping back to highlights yet (Phase 1). The VSCode extension
-  (Phase 2) lives in [`vscode/`](vscode/).
+- No answer mapping back to highlights yet — planned for a future update.
 
 ## License
 
