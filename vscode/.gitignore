@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.vsix
+# copied from ../extension by esbuild.js — do not edit here
+media/theme.js
+media/prompts/
+media/fonts/
+media/icon128.png

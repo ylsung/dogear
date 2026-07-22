@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dogear</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header>
+    <h1 id="brand">Dogear</h1>
+    <span id="count"></span>
+  </header>
+
+  <main id="list">
+    <p class="empty" id="empty">
+      Select text on any page, press <kbd id="hotkey">…</kbd> (or right-click →
+      “Dogear: ask about selection”), and your anchored queries collect here.
+      <br /><br />
+      Click a card to select it (<kbd>Shift</kbd>/<kbd>⌘</kbd>-click for several), drag to reorder.
+    </p>
+  </main>
+
+  <footer>
+    <div class="actions">
+      <button id="copy" title="Copy the composed prompt to the clipboard">Copy prompt</button>
+      <button id="to-chatgpt" title="Insert the composed prompt into an open chatgpt.com tab">→ ChatGPT</button>
+      <button id="to-claude" title="Insert the composed prompt into an open claude.ai tab">→ Claude</button>
+      <button id="clear" class="danger" title="Remove all queries">Clear</button>
+    </div>
+    <div class="actions">
+      <button id="open-pdf" style="display:none" title="Chrome's built-in PDF viewer doesn't support selection capture — reopen this PDF in Dogear's viewer">
+        Open this PDF in Dogear viewer
+      </button>
+    </div>
+    <div class="lang-row">
+      <label for="lang">Prompt language</label>
+      <select id="lang" title="Language used for the composed prompt sent to the AI — not the panel UI"></select>
+    </div>
+    <p class="note" id="note"></p>
+  </footer>
+
+  <script src="theme.js"></script>
+  <script src="prompts/index.js"></script>
+  <script src="prompts/en.js"></script>
+  <script src="prompts/zh-TW.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

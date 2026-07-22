@@ -1,0 +1,103 @@
+{
+  "name": "dogear-vscode",
+  "displayName": "Dogear",
+  "description": "Select code or text, attach a query to each selection, then batch-send them all to Claude Code or Codex as one prompt.",
+  "version": "0.1.0",
+  "publisher": "ylsung",
+  "license": "MIT",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "icon": "media/icon128.png",
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dogear.askSelection",
+        "title": "Dogear: Add query for selection"
+      },
+      {
+        "command": "dogear.askCodexSelection",
+        "title": "Dogear: Add selected Codex text"
+      },
+      {
+        "command": "dogear.askClaudeSelection",
+        "title": "Dogear: Add selected Claude Code text"
+      },
+      {
+        "command": "dogear.askMarkdownPreviewSelection",
+        "title": "Dogear: Add selected preview text"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dogear.askSelection",
+        "key": "ctrl+alt+q",
+        "mac": "ctrl+alt+q",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "dogear.askMarkdownPreviewSelection",
+        "key": "ctrl+alt+q",
+        "mac": "ctrl+alt+q",
+        "when": "activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor'"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "dogear.askSelection",
+          "when": "editorHasSelection",
+          "group": "dogear"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "dogear.askCodexSelection",
+          "when": "webviewId == 'chatgpt.sidebarView' || webviewId == 'chatgpt.sidebarSecondaryView' || webviewId == 'chatgpt.conversationEditor'",
+          "group": "dogear"
+        },
+        {
+          "command": "dogear.askClaudeSelection",
+          "when": "webviewId == 'claudeVSCodeSidebar' || webviewId == 'claudeVSCodeSidebarSecondary' || webviewId == 'claudeVSCodePanel'",
+          "group": "dogear"
+        },
+        {
+          "command": "dogear.askMarkdownPreviewSelection",
+          "when": "webviewId == 'markdown.preview' || webviewId == 'vscode.markdown.preview.editor'",
+          "group": "dogear"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dogear",
+          "title": "Dogear",
+          "icon": "media/dogear.svg"
+        }
+      ]
+    },
+    "views": {
+      "dogear": [
+        {
+          "type": "webview",
+          "id": "dogear.queue",
+          "name": "Queue",
+          "icon": "media/dogear.svg"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "node esbuild.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.5.0"
+  }
+}
