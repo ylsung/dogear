@@ -1,91 +1,77 @@
 import * as vscode from 'vscode';
-import { execFile } from 'child_process';
 
-// Neither the Claude Code nor Codex VSCode extensions expose a "prefill the
-// chat panel" command (anthropics/claude-code#27873). Reuse a matching CLI
-// terminal so its conversation survives, and write without a newline so the
-// user can review/edit the prompt before pressing Enter. Clipboard is the
-// fallback when the CLI isn't installed.
+type ChatTarget = 'claude' | 'codex';
 
-const CLI_LABELS: Record<string, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
+interface SidebarTarget {
+  extensionId: string;
+  label: string;
+  openCommand: string;
+}
+
+const SIDEBAR_TARGETS: Record<ChatTarget, SidebarTarget> = {
+  claude: {
+    extensionId: 'anthropic.claude-code',
+    label: 'Claude Code',
+    openCommand: 'claude-vscode.sidebar.open',
+  },
+  codex: {
+    extensionId: 'openai.chatgpt',
+    label: 'Codex',
+    openCommand: 'chatgpt.openSidebar',
+  },
 };
-
-const cliPathCache = new Map<string, string | null>();
-const NEW_TERMINAL_STARTUP_MS: Record<string, number> = {
-  claude: 1200,
-  // Codex initializes its full-screen composer after the process itself has
-  // started; input sent earlier can be partially consumed during startup.
-  codex: 2500,
-};
-
-function terminalInput(target: string, prompt: string): string {
-  if (target !== 'codex') return prompt;
-  // VS Code's Terminal.sendText sends embedded newlines as literal Enter
-  // keystrokes. Codex therefore submits a multiline prompt one line at a
-  // time unless it is marked as a bracketed paste. These markers are the
-  // standard terminal protocol used by normal Cmd/Ctrl+V paste operations.
-  return `\x1b[200~${prompt}\x1b[201~`;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function findCli(name: string): Promise<string | null> {
-  if (cliPathCache.has(name)) return Promise.resolve(cliPathCache.get(name)!);
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  return new Promise((resolve) => {
-    execFile(finder, [name], (err, stdout) => {
-      const p = err ? null : stdout.split(/\r?\n/)[0].trim() || null;
-      cliPathCache.set(name, p);
-      resolve(p);
-    });
-  });
-}
 
 export async function copyPrompt(prompt: string): Promise<void> {
   await vscode.env.clipboard.writeText(prompt);
 }
 
-export async function sendToCli(target: string, prompt: string): Promise<void> {
-  const label = CLI_LABELS[target];
-  if (!label) return;
-  const cli = await findCli(target);
-  if (!cli) {
-    await vscode.env.clipboard.writeText(prompt);
+/**
+ * Put a prompt on the clipboard, focus the requested extension's sidebar, and
+ * invoke VS Code's paste command in the focused webview.
+ *
+ * Claude Code and Codex currently expose commands for opening their sidebars,
+ * but neither exposes its composer directly. VS Code's global clipboard
+ * command is the supported bridge to a focused webview; it inserts the text
+ * without synthesizing Enter, so submitting remains an explicit user action.
+ */
+export async function sendToSidebar(target: string, prompt: string): Promise<void> {
+  if (target !== 'claude' && target !== 'codex') return;
+  const sidebar = SIDEBAR_TARGETS[target];
+
+  await vscode.env.clipboard.writeText(prompt);
+
+  if (!vscode.extensions.getExtension(sidebar.extensionId)) {
     vscode.window.showWarningMessage(
-      `Dogear: \`${target}\` CLI not found on PATH — prompt copied to clipboard, paste it into ${label} yourself.`,
+      `Dogear: ${sidebar.label} is not installed. The prompt was copied to the clipboard.`,
     );
     return;
   }
-  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const matchesTarget = (terminal: vscode.Terminal): boolean => {
-    const name = terminal.name.toLowerCase();
-    return target === 'claude' ? name.includes('claude') : name.includes('codex');
-  };
-  const active = vscode.window.activeTerminal;
-  let terminal =
-    (active && matchesTarget(active) ? active : undefined) ||
-    vscode.window.terminals.find(matchesTarget);
-  const isNew = !terminal;
-  if (!terminal) {
-    terminal = vscode.window.createTerminal({ name: `Dogear → ${label}`, shellPath: cli, cwd });
+
+  try {
+    await vscode.commands.executeCommand(sidebar.openCommand);
+  } catch {
+    vscode.window.showWarningMessage(
+      `Dogear: couldn't open the ${sidebar.label} sidebar. The prompt was copied to the clipboard.`,
+    );
+    return;
   }
 
-  terminal.show();
-  if (isNew) {
-    // createTerminal() returns before the pseudoterminal and CLI process are
-    // attached. Await processId first so sendText cannot race process launch,
-    // then allow the interactive Claude/Codex UI a brief startup window.
-    await terminal.processId;
-    await delay(NEW_TERMINAL_STARTUP_MS[target] ?? 1200);
-    if (!vscode.window.terminals.includes(terminal)) return;
+  // View focus completes asynchronously after the open command. Give the
+  // webview a moment to focus its composer before routing the global paste.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  try {
+    await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+  } catch {
+    const pasteKey = process.platform === 'darwin' ? '⌘V' : 'Ctrl+V';
+    vscode.window.showWarningMessage(
+      `Dogear: couldn't paste into ${sidebar.label}. The prompt is copied; press ${pasteKey} to paste it.`,
+    );
+    return;
   }
-  // addNewLine=false is intentional: submitting remains the user's action.
-  terminal.sendText(terminalInput(target, prompt), false);
+
+  const pasteKey = process.platform === 'darwin' ? '⌘V' : 'Ctrl+V';
   vscode.window.showInformationMessage(
-    `Dogear: prompt placed in ${label}. Review it, then press Enter to send.`,
+    `Dogear: prompt pasted into ${sidebar.label}. Review it, then send when ready. If the composer stayed empty, press ${pasteKey}.`,
   );
 }

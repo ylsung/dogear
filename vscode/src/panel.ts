@@ -4,7 +4,7 @@ import * as path from 'path';
 import { QueueStore, QueueItem } from './queue';
 import { Decorations } from './decorations';
 import { locateAnchor, rangeFromOffsets } from './anchors';
-import { copyPrompt, sendToCli } from './send';
+import { copyPrompt, sendToSidebar } from './send';
 
 export class DogearPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dogear.queue';
@@ -64,7 +64,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
         this.note('Prompt copied — paste it into any chat.');
         break;
       case 'send':
-        await sendToCli(msg.target, msg.prompt);
+        await sendToSidebar(msg.target, msg.prompt);
         break;
       case 'clear': {
         const n = this.store.get().length;
@@ -168,8 +168,8 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   <footer>
     <div class="actions">
       <button id="copy" title="Copy the composed prompt to the clipboard">Copy prompt</button>
-      <button id="to-claude" title="Place the composed prompt in an existing Claude Code terminal when possible">→ Claude Code</button>
-      <button id="to-codex" title="Place the composed prompt in an existing Codex terminal when possible">→ Codex</button>
+      <button id="to-claude" title="Paste the composed prompt into the Claude Code sidebar without sending">→ Claude Code</button>
+      <button id="to-codex" title="Paste the composed prompt into the Codex sidebar without sending">→ Codex</button>
       <button id="clear" class="danger" title="Remove all queries">Clear</button>
     </div>
     <div class="lang-row">

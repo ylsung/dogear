@@ -374,7 +374,7 @@ async function composeOrWarn() {
 }
 
 // ---------- delivery ----------
-// Clipboard, terminals, and the confirm dialog all live host-side (webviews
+// Clipboard, sidebar commands, and the confirm dialog all live host-side (webviews
 // block window.confirm and may lack clipboard focus).
 
 document.getElementById('copy').addEventListener('click', async () => {
