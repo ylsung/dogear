@@ -1,8 +1,8 @@
 # 🐶 Dogear for VSCode
 
-**Mark it now, ask about it later** — inside your editor. Select code or text,
-attach a query to each selection, and batch-send them all to Claude Code or
-Codex as one composed prompt. Sibling of the Dogear Chrome extension (in
+**Mark your questions and submit in a batch** — inside your editor. Select code or text,
+attach a query to each selection, and compose them for Claude Code or Codex as
+one prompt. Sibling of the Dogear Chrome extension (in
 `extension/` in the same repo); they share the same theme, prompt templates,
 and queue model.
 
@@ -35,11 +35,9 @@ the source of truth lives in `../extension/`. Edit there, rebuild here.
    file groups), or delete queries. Click a file header to jump to the anchored
    code.
 5. Deliver the batch:
-   - **→ Claude Code / → Codex** reuses the active matching terminal when
-     possible (or another existing matching terminal), places the composed
-     prompt at its input, and waits for you to press Enter. It creates a CLI
-     terminal only when none exists, and falls back to copying if the CLI isn't
-     on your PATH.
+   - **→ Claude Code / → Codex** opens the matching chat sidebar and pastes the
+     composed prompt into its composer without sending it. The prompt remains
+     on the clipboard as a fallback.
    - **Copy prompt** puts it on the clipboard for anywhere else.
 
 ### Markdown previews and AI chat views
@@ -61,7 +59,8 @@ line numbers in the composed prompt follow along.
 
 - The queue lives in the workspace, so questions about repo A never show up
   while you're in repo B.
-- Neither the Claude Code nor Codex VSCode extensions currently accept a
-  programmatic prompt into their chat panels
+- Neither the Claude Code nor Codex VSCode extensions currently exposes its
+  composer directly
   ([anthropics/claude-code#27873](https://github.com/anthropics/claude-code/issues/27873));
-  that's why delivery goes through their CLIs.
+  Dogear therefore focuses the requested sidebar and uses VS Code's global
+  clipboard command to paste. Sending remains an explicit user action.
