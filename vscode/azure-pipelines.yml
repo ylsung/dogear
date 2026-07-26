@@ -17,6 +17,15 @@ steps:
     displayName: "Install dependencies"
 
   - task: AzureCLI@2
+    displayName: "Print Azure DevOps identity ID for Marketplace membership"
+    inputs:
+      azureSubscription: "dogear-marketplace-publish"
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me --resource 499b84ac-1321-427f-aa17-267ca6975798
+
+  - task: AzureCLI@2
     displayName: "Publish to VS Code Marketplace"
     inputs:
       azureSubscription: "dogear-marketplace-publish"
