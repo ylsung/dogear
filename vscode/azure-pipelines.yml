@@ -15,6 +15,7 @@ steps:
 
   - script: npm ci
     displayName: "Install dependencies"
+    workingDirectory: vscode
 
   - task: AzureCLI@2
     displayName: "Print Azure DevOps identity ID for Marketplace membership"
@@ -31,6 +32,7 @@ steps:
       azureSubscription: "dogear-marketplace-publish"
       scriptType: bash
       scriptLocation: inlineScript
+      workingDirectory: vscode
       inlineScript: |
         set -e
         npm install -g @vscode/vsce
