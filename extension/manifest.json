@@ -37,7 +37,7 @@
   "commands": {
     "ask-selection": {
       "suggested_key": { "default": "Alt+Q", "mac": "MacCtrl+Q" },
-      "description": "Dogear: ask about the current selection"
+      "description": "Dogear: ask about a text or screenshot selection"
     }
   }
 }

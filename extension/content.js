@@ -225,6 +225,9 @@
         font-size: 11.5px; color: ${T.colors.textMuted}; border-left: 3px solid ${T.colors.primary};
         padding-left: 8px; margin: 0 0 8px 20px; max-height: 60px; overflow: hidden;
       }
+      .popover .excerpt img {
+        display: block; max-width: 100%; max-height: 88px; border-radius: 5px; object-fit: contain;
+      }
       .popover .dogear-composer {
         width: 100%; min-height: 56px; resize: vertical; font-size: 13px;
         border: 1px solid ${T.colors.borderStrong}; border-radius: 6px; padding: 6px; outline: none;
@@ -275,6 +278,25 @@
         background: ${T.colors.dark}; color: ${T.colors.textOnDark}; border-radius: 8px;
         padding: 8px 14px; font-size: 12.5px;
       }
+      .capture-overlay {
+        display: none; position: fixed; inset: 0; z-index: 2147483646;
+        cursor: crosshair; background: rgba(10, 16, 22, .18); user-select: none;
+      }
+      .capture-instructions {
+        position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+        display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+        color: white; background: rgba(20, 24, 28, .9); border-radius: 7px;
+        font-size: 12px; cursor: default;
+      }
+      .capture-full {
+        border: 1px solid rgba(255,255,255,.35); border-radius: 5px; padding: 4px 7px;
+        background: rgba(255,255,255,.12); color: white; cursor: pointer;
+      }
+      .capture-box {
+        display: none; position: fixed; border: 2px solid ${T.colors.primary};
+        background: ${T.colors.highlight}; box-shadow: 0 0 0 9999px rgba(10, 16, 22, .28);
+        pointer-events: none;
+      }
   `;
   shadow.innerHTML = `
     <div class="popover">
@@ -290,6 +312,13 @@
           <button class="add">Add to queue</button>
         </div>
       </div>
+    </div>
+    <div class="capture-overlay" tabindex="-1">
+      <div class="capture-instructions">
+        <span>Drag to select a screenshot · Esc to cancel</span>
+        <button class="capture-full">Use visible page</button>
+      </div>
+      <div class="capture-box"></div>
     </div>
     <div class="toast"></div>
   `;
@@ -356,6 +385,9 @@
   const addBtn = shadow.querySelector('.add');
   const closeBtn = shadow.querySelector('.close');
   const openQueueBtn = shadow.querySelector('.open-queue');
+  const captureOverlay = shadow.querySelector('.capture-overlay');
+  const captureBox = shadow.querySelector('.capture-box');
+  const captureFullBtn = shadow.querySelector('.capture-full');
   const toastEl = shadow.querySelector('.toast');
 
   function attachHost() {
@@ -367,6 +399,7 @@
   // the selection on any mousedown, so it may already be gone by the time the
   // context-menu command or hotkey reaches us.
   let pendingCapture = null;
+  let pendingCaptureAt = 0;
   let lastPoint = { x: 24, y: 24 };
   const previewUrls = new Map();
 
@@ -457,14 +490,21 @@
   // previous stash when the selection is already gone.
   function stashCapture() {
     const cap = getCapture();
-    if (cap) pendingCapture = cap;
+    if (cap) {
+      pendingCapture = cap;
+      pendingCaptureAt = Date.now();
+    }
   }
 
   function openPopover() {
-    const cap = getCapture() || pendingCapture;
-    if (!cap) return;
+    const cap = getCapture() || (Date.now() - pendingCaptureAt < 2000 ? pendingCapture : null);
+    if (!cap) {
+      startRegionCapture();
+      return;
+    }
     savedCapture = cap;
     const text = cap.text;
+    excerptEl.replaceChildren();
     excerptEl.textContent = text.length > 200 ? `${text.slice(0, 200)}…` : text;
     positionNear(popover, captureRect(cap));
     popover.style.display = 'block';
@@ -477,6 +517,102 @@
     pendingCapture = null;
     composer.setParts([]);
   }
+
+  function sourceReference() {
+    const source = { url: pageUrl(), title: document.title || pageUrl() };
+    if (IS_DOGEAR_VIEWER) source.viewUrl = location.href.split('#')[0];
+    return source;
+  }
+
+  function startRegionCapture() {
+    closePopover();
+    captureBox.style.display = 'none';
+    captureOverlay.style.display = 'block';
+    captureOverlay.focus();
+  }
+
+  function stopRegionCapture() {
+    captureOverlay.style.display = 'none';
+    captureBox.style.display = 'none';
+  }
+
+  async function finishRegionCapture(rect) {
+    stopRegionCapture();
+    // Let Chrome paint away Dogear's overlay before capturing the tab.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'dogear-capture-region',
+        rect,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+      if (!response?.ok) throw new Error(response?.error || 'Could not capture screenshot.');
+      previewUrls.set(response.asset.id, response.previewDataUrl);
+      savedCapture = {
+        kind: 'image',
+        asset: response.asset,
+        source: sourceReference(),
+        locator: {
+          type: 'viewport-region',
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+        },
+      };
+      const img = document.createElement('img');
+      img.src = response.previewDataUrl;
+      img.alt = 'Selected screenshot';
+      excerptEl.replaceChildren(img);
+      positionNear(popover, { bottom: Math.min(rect.y + rect.height, innerHeight - 180), left: rect.x });
+      popover.style.display = 'block';
+      composer.setParts([]).then(() => composer.focus());
+    } catch (error) {
+      toast(error.message || 'Could not capture screenshot.');
+    }
+  }
+
+  let captureStart = null;
+  captureOverlay.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('.capture-instructions')) return;
+    event.preventDefault();
+    captureStart = { x: event.clientX, y: event.clientY };
+    captureBox.style.display = 'block';
+    captureOverlay.setPointerCapture(event.pointerId);
+  });
+  captureOverlay.addEventListener('pointermove', (event) => {
+    if (!captureStart) return;
+    const x = Math.min(captureStart.x, event.clientX);
+    const y = Math.min(captureStart.y, event.clientY);
+    captureBox.style.left = `${x}px`;
+    captureBox.style.top = `${y}px`;
+    captureBox.style.width = `${Math.abs(event.clientX - captureStart.x)}px`;
+    captureBox.style.height = `${Math.abs(event.clientY - captureStart.y)}px`;
+  });
+  captureOverlay.addEventListener('pointerup', (event) => {
+    if (!captureStart) return;
+    const start = captureStart;
+    captureStart = null;
+    const rect = {
+      x: Math.min(start.x, event.clientX),
+      y: Math.min(start.y, event.clientY),
+      width: Math.abs(event.clientX - start.x),
+      height: Math.abs(event.clientY - start.y),
+    };
+    if (rect.width < 8 || rect.height < 8) stopRegionCapture();
+    else finishRegionCapture(rect);
+  });
+  captureOverlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') stopRegionCapture();
+  });
+  captureFullBtn.addEventListener('click', () => finishRegionCapture({
+    x: 0,
+    y: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
 
   let toastTimer = null;
   function toast(msg) {
@@ -495,7 +631,17 @@
     const cap = savedCapture;
     let anchor;
     let page;
-    if (cap.kind === 'range') {
+    if (cap.kind === 'image') {
+      const item = M.createImageRequest({
+        id: crypto.randomUUID(),
+        source: cap.source,
+        locator: cap.locator,
+        asset: cap.asset,
+        messageParts,
+      });
+      await addQueueItem(item, cap.source.url);
+      return;
+    } else if (cap.kind === 'range') {
       anchor = makeAnchor(cap.range);
       // In the bundled PDF.js viewer, record which PDF page the selection is on.
       const startEl =
@@ -516,13 +662,7 @@
       };
     }
     if (page) anchor.page = page;
-    const source = {
-      url: pageUrl(),
-      title: document.title || pageUrl(),
-    };
-    // Where to navigate back to (the Dogear viewer), as opposed to source.url,
-    // the canonical source cited in the composed prompt.
-    if (IS_DOGEAR_VIEWER) source.viewUrl = location.href.split('#')[0];
+    const source = sourceReference();
     const item = M.createTextRequest({
       id: crypto.randomUUID(),
       source,
@@ -530,13 +670,17 @@
       question: '',
     });
     item.message = { role: 'user', parts: messageParts };
+    await addQueueItem(item, source.url, cap);
+  }
+
+  async function addQueueItem(item, sourceUrl, cap = savedCapture) {
     let queue;
     try {
       ({ queue = [] } = await chrome.storage.local.get('queue'));
       // Keep the queue grouped: insert after the last question from this page.
       let insertAt = queue.length;
       for (let i = queue.length - 1; i >= 0; i--) {
-        if (M.sourceOf(queue[i]).url === source.url) {
+        if (M.sourceOf(queue[i]).url === sourceUrl) {
           insertAt = i + 1;
           break;
         }
@@ -548,7 +692,7 @@
       toast('Dogear was reloaded — refresh this page to reconnect.');
       return;
     }
-    if (cap.kind === 'input') {
+    if (cap?.kind === 'input') {
       cap.el.setSelectionRange(cap.end, cap.end);
     }
     closePopover();
@@ -620,6 +764,10 @@
     if (msg && msg.type === 'dogear-open-ask') {
       attachHost();
       openPopover();
+    }
+    if (msg && msg.type === 'dogear-start-region') {
+      attachHost();
+      startRegionCapture();
     }
   });
 

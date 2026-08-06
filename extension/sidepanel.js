@@ -492,6 +492,18 @@ document.getElementById('clear').addEventListener('click', async () => {
   if (confirm(`Remove all ${queue.length} queries?`)) await setQueue([]);
 });
 
+document.getElementById('capture-region').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-start-region' });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tab.id, { active: true });
+  } catch (_) {
+    note('Dogear cannot capture this browser page.');
+  }
+});
+
 // Runs inside the chat tab. Finds the composer and inserts text at the end,
 // leaving the prompt in the box for the user to review and send (PRD decision).
 function injectPrompt(text) {

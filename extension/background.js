@@ -68,6 +68,60 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true;
 });
 
+function blobDataUrl(blob) {
+  return blob.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return `data:${blob.type};base64,${btoa(binary)}`;
+  });
+}
+
+async function cropCapture(dataUrl, rect, viewport) {
+  const sourceBlob = await (await fetch(dataUrl)).blob();
+  const bitmap = await createImageBitmap(sourceBlob);
+  const scaleX = bitmap.width / viewport.width;
+  const scaleY = bitmap.height / viewport.height;
+  const sx = Math.max(0, Math.floor(rect.x * scaleX));
+  const sy = Math.max(0, Math.floor(rect.y * scaleY));
+  const width = Math.max(1, Math.min(bitmap.width - sx, Math.round(rect.width * scaleX)));
+  const height = Math.max(1, Math.min(bitmap.height - sy, Math.round(rect.height * scaleY)));
+  const canvas = new OffscreenCanvas(width, height);
+  canvas.getContext('2d').drawImage(bitmap, sx, sy, width, height, 0, 0, width, height);
+  bitmap.close();
+  return { blob: await canvas.convertToBlob({ type: 'image/png' }), width, height };
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'dogear-capture-region') return false;
+  const rect = msg.rect;
+  const viewport = msg.viewport;
+  const numbers = [rect?.x, rect?.y, rect?.width, rect?.height, viewport?.width, viewport?.height];
+  if (!sender.tab || numbers.some((value) => !Number.isFinite(value)) || rect.width < 2 || rect.height < 2) {
+    sendResponse({ ok: false, error: 'Invalid screenshot region.' });
+    return false;
+  }
+  (async () => {
+    try {
+      const capture = await chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'png' });
+      const cropped = await cropCapture(capture, rect, viewport);
+      const asset = await DOGEAR_ASSETS.put(cropped.blob, {
+        mimeType: 'image/png',
+        displayName: `dogear-screenshot-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
+        width: cropped.width,
+        height: cropped.height,
+        origin: { type: 'tab-screenshot', url: sender.tab.url || '' },
+      });
+      sendResponse({ ok: true, asset, previewDataUrl: await blobDataUrl(cropped.blob) });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message || 'Could not capture screenshot.' });
+    }
+  })();
+  return true;
+});
+
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === 'ask-selection' && tab && tab.id != null) openAsk(tab.id);
 });
