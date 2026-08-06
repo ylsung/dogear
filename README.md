@@ -26,16 +26,24 @@ queue model:
    `⌃Q` on Mac) or right-click → *Dogear: ask about selection*. Chrome only
    applies suggested hotkeys at install time; check or rebind at
    `chrome://extensions/shortcuts`. The side panel shows your actual binding.
-2. Type your query, press Enter. The selection gets a numbered highlight and the
-   query lands in the queue (badge on the toolbar icon).
+   Press the hotkey without selected text to capture part or all of the visible
+   page as image context. You can also use **Capture screenshot** in the side panel.
+2. Type your query, optionally pasting or dropping reference images directly into
+   the composer, then press Enter. Text selections get a numbered highlight and
+   the multimodal query lands in the queue (badge on the toolbar icon).
 3. Keep reading; repeat across as many pages/tabs as you like — the queue is global.
 4. Click the Dogear toolbar icon to open the side panel: edit, reorder, or delete
    queries.
 5. Deliver the batch:
-   - **→ ChatGPT / → Claude** inserts the composed prompt into an open chat tab and
-     leaves it in the box for you to review and send.
-   - **Copy prompt** puts it on the clipboard for anywhere else (desktop apps,
-     Claude Code, Gemini, …).
+   - **→ ChatGPT / → Claude** attaches the images and inserts the composed prompt
+     into an open chat tab, leaving it in the box for you to review and send.
+   - **Copy prompt** puts the text on the clipboard for any other chat. The side
+     panel opens a **Manual handoff** tray containing matching, labeled images;
+     drag them into the destination composer or use **Save** if it rejects dragging.
+
+Images are kept in extension-local storage while you collect and edit questions.
+Dogear only hands them to a website when you choose a delivery action or drag an
+image from the manual handoff tray.
 
 ## PDFs
 
@@ -94,7 +102,11 @@ directly, are in [`vscode/README.md`](vscode/README.md).
   a persistent visual highlight — the browser doesn't allow marking inside a
   text control.
 - **Chat injection is best-effort**: if chatgpt.com/claude.ai change their composer
-  DOM, the buttons fall back to copying the prompt to your clipboard.
+  or upload controls, Dogear copies the prompt and opens the labeled manual handoff
+  tray for any images it could not attach.
+- Screenshot capture covers the current visible page area. It does not yet scroll
+  and stitch an entire page, capture other desktop applications, or watch native
+  screenshot files.
 - Highlights re-anchor by quote + context; on heavily dynamic pages a highlight may
   fail to re-attach after reload (the selected text is embedded in the prompt regardless,
   so your queries still work).
