@@ -29,6 +29,11 @@ const emptyEl = document.getElementById('empty');
 const countEl = document.getElementById('count');
 const noteEl = document.getElementById('note');
 const M = globalThis.DOGEAR_MODEL;
+const ASSETS = globalThis.DOGEAR_ASSETS;
+const COMPOSER = globalThis.DOGEAR_COMPOSER;
+const liveObjectUrls = [];
+const liveComposers = [];
+let quietQueueWrites = 0;
 
 const SOFT_CAP = 10;
 
@@ -38,6 +43,11 @@ async function getQueue() {
 }
 
 async function setQueue(queue) {
+  await chrome.storage.local.set({ queue });
+}
+
+async function setQueueQuietly(queue) {
+  quietQueueWrites += 1;
   await chrome.storage.local.set({ queue });
 }
 
@@ -198,6 +208,8 @@ async function dropSelectedAt(targetId, before) {
 }
 
 async function render() {
+  liveObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+  liveComposers.splice(0).forEach((composer) => composer.destroy());
   const queue = await getQueue();
   countEl.textContent = queue.length
     ? `${queue.length} ${queue.length > 1 ? 'queries' : 'query'}`
@@ -253,7 +265,7 @@ async function render() {
     if (selectedIds.has(item.id)) card.classList.add('selected');
 
     card.addEventListener('click', async (e) => {
-      if (e.target.closest('textarea, button')) return;
+      if (e.target.closest('.dogear-composer, textarea, input, button')) return;
       if (e.shiftKey && lastAnchorId) {
         await selectRange(lastAnchorId, item.id);
       } else if (e.metaKey || e.ctrlKey) {
@@ -269,6 +281,10 @@ async function render() {
     });
 
     card.addEventListener('dragstart', (e) => {
+      if (e.target.closest('.dogear-composer, input, button')) {
+        e.preventDefault();
+        return;
+      }
       e.stopPropagation(); // don't also start the enclosing group's drag
       dragMode = 'card';
       if (!selectedIds.has(item.id)) {
@@ -284,22 +300,74 @@ async function render() {
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = `Q${idx + 1}`;
-    const quote = document.createElement('blockquote');
     const contextText = M.textOf(item.selectedContext.flatMap((context) => context.parts));
-    quote.textContent = truncate(contextText || 'Image selection', 220);
-    quote.title = contextText;
-    top.append(num, quote);
+    if (contextText) {
+      const quote = document.createElement('blockquote');
+      quote.textContent = truncate(contextText, 220);
+      quote.title = contextText;
+      top.append(num, quote);
+    } else {
+      const images = document.createElement('div');
+      images.className = 'context-images';
+      top.append(num, images);
+      for (const part of item.selectedContext.flatMap((context) => context.parts)) {
+        if (part.type !== 'asset') continue;
+        ASSETS.get(part.assetId).then((record) => {
+          if (!record || !images.isConnected) return;
+          const url = URL.createObjectURL(record.blob);
+          liveObjectUrls.push(url);
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = part.label || 'Selected image';
+          img.title = img.alt;
+          images.appendChild(img);
+        });
+      }
+    }
 
-    const q = document.createElement('textarea');
-    q.placeholder = 'Your query about this selection…';
-    q.value = M.textOf(item.message.parts);
-    q.addEventListener('change', async () => {
+    const q = document.createElement('div');
+    q.dataset.placeholder = 'Type a question, paste an image, or drop one here…';
+    let draftParts = item.message.parts;
+    const saveDraft = async (parts) => {
       const queueNow = await getQueue();
       const target = queueNow.find((x) => x.id === item.id);
       if (target) {
-        target.message = { role: 'user', parts: [M.textPart(q.value.trim())] };
-        await setQueue(queueNow);
+        target.message = { role: 'user', parts: M.coalesceParts(parts) };
+        await setQueueQuietly(queueNow);
       }
+    };
+    const composer = COMPOSER.create(q, {
+      parts: item.message.parts,
+      maxFileSize: 15 * 1024 * 1024,
+      storeFile: (file) => ASSETS.put(file, {
+        mimeType: file.type,
+        displayName: file.name || 'pasted-image.png',
+        origin: { type: 'question-input' },
+      }),
+      resolveAssetUrl: async (id) => {
+        const record = await ASSETS.get(id);
+        if (!record) return '';
+        const url = URL.createObjectURL(record.blob);
+        liveObjectUrls.push(url);
+        return url;
+      },
+      onChange: (parts, reason) => {
+        draftParts = parts;
+        if (reason === 'asset') saveDraft(parts);
+      },
+      onBlur: () => saveDraft(draftParts),
+      onError: note,
+    });
+    liveComposers.push(composer);
+
+    const attachInput = document.createElement('input');
+    attachInput.type = 'file';
+    attachInput.accept = 'image/*';
+    attachInput.multiple = true;
+    attachInput.hidden = true;
+    attachInput.addEventListener('change', () => {
+      composer.addFiles(attachInput.files);
+      attachInput.value = '';
     });
 
     const tools = document.createElement('div');
@@ -312,12 +380,13 @@ async function render() {
       return b;
     };
     tools.append(
+      mk('＋ Image', 'Attach one or more images to this question', () => attachInput.click()),
       mk('↑', 'Move up', () => move(item.id, -1)),
       mk('↓', 'Move down', () => move(item.id, +1)),
       mk('✕', 'Delete', () => remove(item.id)),
     );
 
-    card.append(top, q, tools);
+    card.append(top, q, attachInput, tools);
     group.appendChild(card);
   });
 }
@@ -535,7 +604,12 @@ async function updateHotkeyHint() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.queue) render();
+  if (area !== 'local' || !changes.queue) return;
+  if (quietQueueWrites > 0) {
+    quietQueueWrites -= 1;
+    return;
+  }
+  render();
 });
 
 updateHotkeyHint();
