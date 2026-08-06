@@ -24,20 +24,33 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch(() => {});
 
-function openAsk(tabId) {
-  chrome.tabs.sendMessage(tabId, { type: 'dogear-open-ask' }).catch(() => {
+const recentSelectionFrames = new Map();
+
+function openAsk(tabId, requestedFrameId) {
+  const recent = recentSelectionFrames.get(tabId);
+  const frameId = Number.isInteger(requestedFrameId)
+    ? requestedFrameId
+    : recent && Date.now() - recent.at < 2000
+      ? recent.frameId
+      : 0;
+  chrome.tabs.sendMessage(tabId, { type: 'dogear-open-ask' }, { frameId }).catch(() => {
     // Content script not present (chrome:// pages, web store, native PDF viewer).
   });
 }
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'dogear-ask' && tab && tab.id != null) openAsk(tab.id);
+  if (info.menuItemId === 'dogear-ask' && tab && tab.id != null) {
+    openAsk(tab.id, Number.isInteger(info.frameId) ? info.frameId : undefined);
+  }
   if (info.menuItemId === 'dogear-open-pdf' && info.linkUrl) {
     chrome.tabs.create({ url: viewerUrl(info.linkUrl) });
   }
 });
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg && msg.type === 'dogear-capture-ready' && sender.tab && sender.tab.id != null) {
+    recentSelectionFrames.set(sender.tab.id, { frameId: sender.frameId, at: Date.now() });
+  }
   if (msg && msg.type === 'dogear-open-panel' && sender.tab && sender.tab.id != null) {
     chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
   }
@@ -135,5 +148,7 @@ async function updateBadge() {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.queue) updateBadge();
 });
+
+chrome.tabs.onRemoved.addListener((tabId) => recentSelectionFrames.delete(tabId));
 
 updateBadge();

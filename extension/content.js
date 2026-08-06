@@ -493,6 +493,11 @@
     if (cap) {
       pendingCapture = cap;
       pendingCaptureAt = Date.now();
+      try {
+        chrome.runtime.sendMessage({ type: 'dogear-capture-ready' }).catch(() => {});
+      } catch (_) {
+        // The extension may have been reloaded while this page kept the old script.
+      }
     }
   }
 

@@ -603,7 +603,7 @@ document.getElementById('capture-region').addEventListener('click', async () => 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-start-region' });
+    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-start-region' }, { frameId: 0 });
     await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(tab.id, { active: true });
   } catch (_) {
