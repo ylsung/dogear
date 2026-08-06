@@ -544,6 +544,33 @@ async function renderManualHandoff(queue) {
   handoffEl.hidden = !assets.length;
   if (!assets.length) return;
   handoffSummaryEl.textContent = `Manual handoff · ${assets.length} ${assets.length === 1 ? 'image' : 'images'}`;
+
+  function addFilesToDrag(event, selectedAssets) {
+    // A draggable DOM element gets default text/html payloads. Some chat
+    // composers prefer that text over files, which previously pasted only the
+    // displayed filename. Strip all default data and expose File objects only.
+    event.stopPropagation();
+    event.dataTransfer.clearData();
+    for (const asset of selectedAssets) {
+      event.dataTransfer.items.add(new File(
+        [asset.record.blob],
+        asset.deliveredName,
+        { type: asset.record.mimeType, lastModified: asset.record.createdAt },
+      ));
+    }
+    event.dataTransfer.effectAllowed = 'copy';
+  }
+
+  if (assets.length > 1) {
+    const all = document.createElement('div');
+    all.className = 'handoff-all';
+    all.draggable = true;
+    all.title = `Drag all ${assets.length} images into a chat composer`;
+    all.textContent = `▦ Drag all ${assets.length} images together`;
+    all.addEventListener('dragstart', (event) => addFilesToDrag(event, assets));
+    handoffAssetsEl.appendChild(all);
+  }
+
   for (const asset of assets) {
     const row = document.createElement('div');
     row.className = 'handoff-asset';
@@ -554,10 +581,12 @@ async function renderManualHandoff(queue) {
     const img = document.createElement('img');
     img.src = url;
     img.alt = '';
+    img.draggable = false;
     const label = document.createElement('span');
     label.textContent = `${asset.label} · ${asset.deliveredName}`;
     const download = document.createElement('button');
     download.type = 'button';
+    download.draggable = false;
     download.textContent = 'Save';
     download.title = 'Save this image if drag-and-drop is not accepted';
     download.addEventListener('click', () => {
@@ -566,11 +595,7 @@ async function renderManualHandoff(queue) {
       link.download = asset.deliveredName;
       link.click();
     });
-    row.addEventListener('dragstart', (event) => {
-      const file = new File([asset.record.blob], asset.deliveredName, { type: asset.record.mimeType });
-      event.dataTransfer.items.add(file);
-      event.dataTransfer.effectAllowed = 'copy';
-    });
+    row.addEventListener('dragstart', (event) => addFilesToDrag(event, [asset]));
     row.append(img, label, download);
     handoffAssetsEl.appendChild(row);
   }
@@ -584,7 +609,9 @@ document.getElementById('copy').addEventListener('click', async () => {
   await navigator.clipboard.writeText(delivery.text);
   if (delivery.assets.length) {
     handoffEl.open = true;
-    note(`Prompt copied — drag the ${delivery.assets.length} labeled ${delivery.assets.length === 1 ? 'image' : 'images'} above into any chat.`);
+    note(delivery.assets.length > 1
+      ? `Prompt copied — use “Drag all ${delivery.assets.length} images together” above.`
+      : 'Prompt copied — drag the labeled image above into any chat.');
   } else {
     note('Prompt copied — paste it into any chat.');
   }
