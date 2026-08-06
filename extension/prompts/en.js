@@ -5,7 +5,7 @@ globalThis.DOGEAR_PROMPTS['en'] = {
 
   // Opening instruction; n = number of queries.
   header: (n) =>
-    `I have several questions, each anchored to a source and a piece of selected text. ` +
+    `I have several questions, each anchored to a source and selected text or images. ` +
     `Please address each one under its own numbered header ([Q1], [Q2], …).`,
 
   // One line introducing each source document. letter = A, B, C…
@@ -25,9 +25,17 @@ globalThis.DOGEAR_PROMPTS['en'] = {
   // break, so "\n\n" produces the blank line between marker and selection.
   excerpt: (qNum, where, text) => `[Q${qNum}]${where}\nSelected text: "${text}"`,
 
+  // Used when selected context contains one or more attached assets.
+  multimodalSelection: (qNum, where, content) =>
+    `[Q${qNum}]${where}\nSelected context: ${content}`,
+
   // Optional line showing text around the selection.
   context: (prefix, suffix) => `Surrounding text: "…${prefix}⟨selected text⟩${suffix}…"`,
 
   // The query line itself.
   question: (text) => `Query: ${text}`,
+
+  attachmentsHeader: 'Attached images (uploaded with this prompt):',
+
+  attachment: (label, filename) => `- ${label}: ${filename}`,
 };

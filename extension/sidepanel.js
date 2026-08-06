@@ -31,6 +31,9 @@ const noteEl = document.getElementById('note');
 const M = globalThis.DOGEAR_MODEL;
 const ASSETS = globalThis.DOGEAR_ASSETS;
 const COMPOSER = globalThis.DOGEAR_COMPOSER;
+const handoffEl = document.getElementById('manual-handoff');
+const handoffSummaryEl = document.getElementById('manual-summary');
+const handoffAssetsEl = document.getElementById('manual-assets');
 const liveObjectUrls = [];
 const liveComposers = [];
 let quietQueueWrites = 0;
@@ -49,6 +52,11 @@ async function setQueue(queue) {
 async function setQueueQuietly(queue) {
   quietQueueWrites += 1;
   await chrome.storage.local.set({ queue });
+}
+
+async function collectGarbage(queue) {
+  const referenced = queue.flatMap(M.assetIdsOf);
+  await ASSETS.removeUnreferenced(referenced);
 }
 
 function note(msg) {
@@ -334,6 +342,7 @@ async function render() {
       if (target) {
         target.message = { role: 'user', parts: M.coalesceParts(parts) };
         await setQueueQuietly(queueNow);
+        await collectGarbage(queueNow);
       }
     };
     const composer = COMPOSER.create(q, {
@@ -389,6 +398,7 @@ async function render() {
     card.append(top, q, attachInput, tools);
     group.appendChild(card);
   });
+  await renderManualHandoff(queue);
 }
 
 async function move(id, delta) {
@@ -402,7 +412,9 @@ async function move(id, delta) {
 
 async function remove(id) {
   const queue = await getQueue();
-  await setQueue(queue.filter((x) => x.id !== id));
+  const next = queue.filter((x) => x.id !== id);
+  await setQueue(next);
+  await collectGarbage(next);
 }
 
 // ---------- prompt composition ----------
@@ -437,9 +449,48 @@ function sourceCitation(item, P) {
   return { title, url: `${P.localFile || 'local file'}: ${filename}` };
 }
 
-function composePrompt(queue) {
+function safeFilename(name) {
+  const leaf = String(name || 'image.png').split(/[\\/]/).pop();
+  return leaf.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'image.png';
+}
+
+async function buildAssetPlan(queue) {
+  const ids = [];
+  for (const item of queue) {
+    for (const context of item.selectedContext) {
+      for (const part of context.parts) {
+        if (part.type === 'asset' && !ids.includes(part.assetId)) ids.push(part.assetId);
+      }
+    }
+    for (const part of item.message.parts) {
+      if (part.type === 'asset' && !ids.includes(part.assetId)) ids.push(part.assetId);
+    }
+  }
+  const assets = [];
+  for (let index = 0; index < ids.length; index += 1) {
+    const record = await ASSETS.get(ids[index]);
+    if (!record) continue;
+    const shortLabel = `I${index + 1}`;
+    assets.push({
+      id: record.id,
+      label: `Image ${shortLabel}`,
+      deliveredName: `${shortLabel}-${safeFilename(record.displayName)}`,
+      record,
+    });
+  }
+  return assets;
+}
+
+function renderParts(parts, labels) {
+  return parts.map((part) =>
+    part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
+  ).join('');
+}
+
+function composePrompt(queue, assets) {
   const P = globalThis.DOGEAR_PROMPTS[promptLang] || globalThis.DOGEAR_PROMPTS.en;
   const lines = [P.header(queue.length)];
+  const labels = new Map(assets.map((asset) => [asset.id, asset.label]));
 
   let lastUrl = null;
   let sourceIdx = 0;
@@ -454,13 +505,22 @@ function composePrompt(queue) {
       lastUrl = source.url;
     }
     const where = locator.page ? P.pdfPage(locator.page) : '';
-    const contextText = M.textOf(item.selectedContext.flatMap((context) => context.parts));
-    lines.push('', P.excerpt(idx + 1, where, contextText || '[Image selection]'));
+    const contextParts = item.selectedContext.flatMap((context) => context.parts);
+    const contextText = renderParts(contextParts, labels);
+    const hasContextAsset = contextParts.some((part) => part.type === 'asset');
+    lines.push('', hasContextAsset
+      ? P.multimodalSelection(idx + 1, where, contextText)
+      : P.excerpt(idx + 1, where, contextText));
     if (locator.prefix || locator.suffix) {
       lines.push(P.context(locator.prefix, locator.suffix));
     }
-    lines.push(P.question(M.textOf(item.message.parts)));
+    lines.push(P.question(renderParts(item.message.parts, labels)));
   });
+
+  if (assets.length) {
+    lines.push('', P.attachmentsHeader);
+    assets.forEach((asset) => lines.push(P.attachment(asset.label, asset.deliveredName)));
+  }
 
   return lines.join('\n');
 }
@@ -474,22 +534,69 @@ async function composeOrWarn() {
   if (queue.length > SOFT_CAP) {
     note(`Heads up: ${queue.length} queries in one prompt may dilute answer quality.`);
   }
-  return composePrompt(queue);
+  const assets = await buildAssetPlan(queue);
+  return { text: composePrompt(queue, assets), assets };
+}
+
+async function renderManualHandoff(queue) {
+  const assets = await buildAssetPlan(queue);
+  handoffAssetsEl.replaceChildren();
+  handoffEl.hidden = !assets.length;
+  if (!assets.length) return;
+  handoffSummaryEl.textContent = `Manual handoff · ${assets.length} ${assets.length === 1 ? 'image' : 'images'}`;
+  for (const asset of assets) {
+    const row = document.createElement('div');
+    row.className = 'handoff-asset';
+    row.draggable = true;
+    row.title = 'Drag this image into a chat composer';
+    const url = URL.createObjectURL(asset.record.blob);
+    liveObjectUrls.push(url);
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    const label = document.createElement('span');
+    label.textContent = `${asset.label} · ${asset.deliveredName}`;
+    const download = document.createElement('button');
+    download.type = 'button';
+    download.textContent = 'Save';
+    download.title = 'Save this image if drag-and-drop is not accepted';
+    download.addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = asset.deliveredName;
+      link.click();
+    });
+    row.addEventListener('dragstart', (event) => {
+      const file = new File([asset.record.blob], asset.deliveredName, { type: asset.record.mimeType });
+      event.dataTransfer.items.add(file);
+      event.dataTransfer.effectAllowed = 'copy';
+    });
+    row.append(img, label, download);
+    handoffAssetsEl.appendChild(row);
+  }
 }
 
 // ---------- delivery ----------
 
 document.getElementById('copy').addEventListener('click', async () => {
-  const prompt = await composeOrWarn();
-  if (!prompt) return;
-  await navigator.clipboard.writeText(prompt);
-  note('Prompt copied — paste it into any chat.');
+  const delivery = await composeOrWarn();
+  if (!delivery) return;
+  await navigator.clipboard.writeText(delivery.text);
+  if (delivery.assets.length) {
+    handoffEl.open = true;
+    note(`Prompt copied — drag the ${delivery.assets.length} labeled ${delivery.assets.length === 1 ? 'image' : 'images'} above into any chat.`);
+  } else {
+    note('Prompt copied — paste it into any chat.');
+  }
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
   const queue = await getQueue();
   if (!queue.length) return;
-  if (confirm(`Remove all ${queue.length} queries?`)) await setQueue([]);
+  if (confirm(`Remove all ${queue.length} queries?`)) {
+    await setQueue([]);
+    await collectGarbage([]);
+  }
 });
 
 document.getElementById('capture-region').addEventListener('click', async () => {
@@ -532,9 +639,58 @@ function injectPrompt(text) {
   return document.execCommand('insertText', false, text);
 }
 
+// Runs inside a supported chat tab. Reconstructs one local image as a File and
+// routes it through the page's own file input. One file per invocation keeps
+// extension messages bounded even when a request has several large images.
+function injectFile(payload) {
+  const binary = atob(payload.dataUrl.split(',')[1]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  const file = new File([bytes], payload.name, { type: payload.mimeType });
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  const inputs = [...document.querySelectorAll('input[type="file"]')];
+  const input = inputs.find((candidate) => /image|\*/i.test(candidate.accept || '')) || inputs[0];
+  if (input) {
+    try {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'files',
+      ).set;
+      setter.call(input, transfer.files);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    } catch (_) {
+      // Fall through to a synthetic drop for composers without a file input.
+    }
+  }
+  const composer =
+    document.querySelector('#prompt-textarea') ||
+    document.querySelector('div[contenteditable="true"].ProseMirror') ||
+    document.querySelector('main div[contenteditable="true"]') ||
+    document.querySelector('main textarea');
+  if (!composer) return false;
+  composer.dispatchEvent(new DragEvent('drop', {
+    bubbles: true,
+    cancelable: true,
+    dataTransfer: transfer,
+  }));
+  return true;
+}
+
+function dataUrlForBlob(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Could not read attachment.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function sendToChat(kind) {
-  const prompt = await composeOrWarn();
-  if (!prompt) return;
+  const delivery = await composeOrWarn();
+  if (!delivery) return;
   const cfg =
     kind === 'chatgpt'
       ? { patterns: ['https://chatgpt.com/*', 'https://chat.openai.com/*'], home: 'https://chatgpt.com/', label: 'ChatGPT' }
@@ -549,12 +705,33 @@ async function sendToChat(kind) {
   // Inject first, focus after: once the chat tab is focused the side panel
   // loses focus and clipboard writes are rejected ("Document is not focused").
   const tab = tabs.find((t) => t.active) || tabs[0];
+  const failedAssets = [];
+  for (const asset of delivery.assets) {
+    let attached = false;
+    try {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: injectFile,
+        args: [{
+          dataUrl: await dataUrlForBlob(asset.record.blob),
+          name: asset.deliveredName,
+          mimeType: asset.record.mimeType,
+        }],
+      });
+      attached = !!result?.result;
+    } catch (_) {
+      attached = false;
+    }
+    if (!attached) failedAssets.push(asset);
+    // Give the site's uploader a moment to consume each synthetic change.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
   let inserted = false;
   try {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: injectPrompt,
-      args: [prompt],
+      args: [delivery.text],
     });
     inserted = !!(result && result.result);
   } catch (e) {
@@ -563,11 +740,23 @@ async function sendToChat(kind) {
   if (inserted) {
     await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(tab.id, { active: true });
-    note(`Prompt inserted into ${cfg.label} — review it and hit send.`);
+    if (failedAssets.length) {
+      handoffEl.open = true;
+      note(`Prompt inserted, but ${failedAssets.map((asset) => asset.label).join(', ')} still ${failedAssets.length === 1 ? 'needs' : 'need'} to be dragged into ${cfg.label}.`);
+    } else {
+      note(`Prompt${delivery.assets.length ? ' and images' : ''} inserted into ${cfg.label} — review and send.`);
+    }
   } else {
     try {
-      await navigator.clipboard.writeText(prompt);
-      note(`Couldn't find ${cfg.label}'s input box (site may have changed) — prompt copied to clipboard instead.`);
+      await navigator.clipboard.writeText(delivery.text);
+      if (failedAssets.length) handoffEl.open = true;
+      if (failedAssets.length) {
+        note(`Couldn't complete ${cfg.label} handoff — prompt copied; drag the labeled images above into the chat.`);
+      } else if (delivery.assets.length) {
+        note(`Images attached, but the prompt was copied — paste it into ${cfg.label}.`);
+      } else {
+        note(`Couldn't find ${cfg.label}'s input box — prompt copied to the clipboard.`);
+      }
     } catch (e) {
       note('Couldn\'t insert or copy automatically — use the "Copy prompt" button.');
     }

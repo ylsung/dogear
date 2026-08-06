@@ -180,6 +180,34 @@ footer {
   background: var(--panel);
   padding: 10px 12px;
 }
+#manual-handoff {
+  margin-bottom: 8px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--groupBg);
+}
+#manual-handoff summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+#manual-handoff p { margin: 6px 0; color: var(--textMuted); font-size: 11.5px; line-height: 1.35; }
+#manual-assets { display: flex; gap: 5px; flex-wrap: wrap; }
+.handoff-asset {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 4px;
+  border: 1px solid var(--borderStrong);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: grab;
+}
+.handoff-asset img { width: 34px; height: 30px; object-fit: cover; border-radius: 4px; }
+.handoff-asset span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.handoff-asset button {
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px;
+  color: var(--textMuted); background: var(--panel); cursor: pointer; font-size: 10.5px;
+}
 .actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .actions + .actions { margin-top: 6px; }
 .actions button {
