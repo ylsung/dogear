@@ -43,6 +43,31 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
 });
 
+// Content scripts run in the page's storage origin, so image bytes captured by
+// the on-page composer cross this validated bridge into extension IndexedDB.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'dogear-store-asset') return false;
+  if (!sender.tab || typeof msg.dataUrl !== 'string' || !msg.dataUrl.startsWith('data:image/')) {
+    sendResponse({ ok: false, error: 'Invalid image attachment.' });
+    return false;
+  }
+  (async () => {
+    try {
+      const blob = await (await fetch(msg.dataUrl)).blob();
+      if (blob.size > 15 * 1024 * 1024) throw new Error('Images must be 15 MB or smaller.');
+      const asset = await DOGEAR_ASSETS.put(blob, {
+        mimeType: blob.type,
+        displayName: msg.displayName || 'pasted-image.png',
+        origin: { type: 'question-input', url: sender.tab.url || '' },
+      });
+      sendResponse({ ok: true, asset });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message || 'Could not store image.' });
+    }
+  })();
+  return true;
+});
+
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === 'ask-selection' && tab && tab.id != null) openAsk(tab.id);
 });
