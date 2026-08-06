@@ -1,6 +1,6 @@
 // Dogear background service worker: context menu, hotkey routing, badge count.
 
-importScripts('theme.js');
+importScripts('theme.js', 'model.js', 'asset-store.js');
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
