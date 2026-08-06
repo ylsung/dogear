@@ -4,7 +4,7 @@ globalThis.DOGEAR_PROMPTS['zh-TW'] = {
   name: '繁體中文',
 
   header: (n) =>
-    `我現在有幾個請求，且每個請求都對應特定的來源及一段文字片段。` +
+    `我現在有幾個請求，且每個請求都對應特定的來源及所選文字或圖片。` +
     `請在各自的編號標題（[Q1]、[Q2]…）下分別回應。`,
 
   source: (letter, title, url) => `來源 ${letter}：「${title}」（${url}）`,
@@ -17,7 +17,14 @@ globalThis.DOGEAR_PROMPTS['zh-TW'] = {
 
   excerpt: (qNum, where, text) => `[Q${qNum}]${where}\n片段：「${text}」`,
 
+  multimodalSelection: (qNum, where, content) =>
+    `[Q${qNum}]${where}\n所選內容：${content}`,
+
   context: (prefix, suffix) => `前後文：「…${prefix}⟨片段⟩${suffix}…」`,
 
   question: (text) => `請求：${text}`,
+
+  attachmentsHeader: '隨此提示上傳的圖片：',
+
+  attachment: (label, filename) => `- ${label}：${filename}`,
 };

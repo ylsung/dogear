@@ -21,8 +21,13 @@
   </main>
 
   <footer>
+    <details id="manual-handoff" hidden>
+      <summary id="manual-summary">Manual handoff</summary>
+      <p>Copy the prompt, then drag each labeled image into any chat composer.</p>
+      <div id="manual-assets"></div>
+    </details>
     <div class="actions">
-      <button id="copy" title="Copy the composed prompt to the clipboard">Copy prompt</button>
+      <button id="copy" title="Copy the prompt; attached images stay ready to drag into any chat">Copy prompt</button>
       <button id="to-chatgpt" title="Insert the composed prompt into an open chatgpt.com tab">→ ChatGPT</button>
       <button id="to-claude" title="Insert the composed prompt into an open claude.ai tab">→ Claude</button>
       <button id="capture-region" title="Capture all or part of the visible page">Capture screenshot</button>
