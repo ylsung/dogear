@@ -7,6 +7,7 @@
   window.__dogearLoaded = true;
 
   const T = globalThis.DOGEAR_THEME; // see theme.js — the one place to restyle
+  const M = globalThis.DOGEAR_MODEL;
   const CONTEXT_LEN = 32;
   const IS_DOGEAR_VIEWER =
     location.protocol === 'chrome-extension:' && location.pathname.endsWith('/viewer.html');
@@ -173,14 +174,16 @@
     } catch (e) {
       return; // stale script after extension reload
     }
-    const here = queue.filter((item) => item.url === pageUrl());
+    const here = queue.filter((item) => M.sourceOf(item).url === pageUrl());
     here.forEach((item) => {
       const num = queue.indexOf(item) + 1;
-      let range = locateAnchor(item.anchor);
-      if (!range && item.anchor.exact.includes('\n')) {
+      const locator = M.locatorOf(item);
+      if (locator.type !== 'text-quote') return;
+      let range = locateAnchor(locator);
+      if (!range && locator.exact.includes('\n')) {
         // Multi-line text-field captures (e.g. GitHub's code view) rarely match
         // the rendered DOM verbatim; fall back to marking the first solid line.
-        const firstLine = item.anchor.exact
+        const firstLine = locator.exact
           .split('\n')
           .map((s) => s.trim())
           .find((s) => s.length >= 8);
@@ -188,7 +191,7 @@
           range = locateAnchor({ exact: firstLine, prefix: '', suffix: '', start: -1 });
         }
       }
-      if (range) wrapRange(range, item.id, num, item.question);
+      if (range) wrapRange(range, item.id, num, M.textOf(M.normalizeItem(item).message.parts));
     });
   }
 
@@ -450,25 +453,27 @@
         start: -1,
       };
     }
-    const item = {
-      id: crypto.randomUUID(),
+    if (page) anchor.page = page;
+    const source = {
       url: pageUrl(),
       title: document.title || pageUrl(),
-      anchor,
-      question,
-      createdAt: Date.now(),
     };
-    if (page) item.page = page;
-    // Where to navigate back to (the Dogear viewer), as opposed to `url`,
+    // Where to navigate back to (the Dogear viewer), as opposed to source.url,
     // the canonical source cited in the composed prompt.
-    if (IS_DOGEAR_VIEWER) item.viewUrl = location.href.split('#')[0];
+    if (IS_DOGEAR_VIEWER) source.viewUrl = location.href.split('#')[0];
+    const item = M.createTextRequest({
+      id: crypto.randomUUID(),
+      source,
+      locator: { type: 'text-quote', ...anchor },
+      question,
+    });
     let queue;
     try {
       ({ queue = [] } = await chrome.storage.local.get('queue'));
       // Keep the queue grouped: insert after the last question from this page.
       let insertAt = queue.length;
       for (let i = queue.length - 1; i >= 0; i--) {
-        if (queue[i].url === item.url) {
+        if (M.sourceOf(queue[i]).url === source.url) {
           insertAt = i + 1;
           break;
         }

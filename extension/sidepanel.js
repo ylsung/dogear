@@ -28,12 +28,13 @@ const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
 const countEl = document.getElementById('count');
 const noteEl = document.getElementById('note');
+const M = globalThis.DOGEAR_MODEL;
 
 const SOFT_CAP = 10;
 
 async function getQueue() {
   const { queue = [] } = await chrome.storage.local.get('queue');
-  return queue;
+  return queue.map(M.normalizeItem);
 }
 
 async function setQueue(queue) {
@@ -74,17 +75,18 @@ function isSafeUrl(url) {
 }
 
 function sourceDestination(item) {
-  if (item.viewUrl && isSafeUrl(item.viewUrl)) return item.viewUrl;
-  if (!isSafeUrl(item.url)) return '#';
-  if (looksLikePdf(item.url)) return viewerLink(item.url);
-  return item.url;
+  const source = M.sourceOf(item);
+  if (source.viewUrl && isSafeUrl(source.viewUrl)) return source.viewUrl;
+  if (!isSafeUrl(source.url)) return '#';
+  if (looksLikePdf(source.url)) return viewerLink(source.url);
+  return source.url;
 }
 
 // Focus the already-open tab for a source if there is one; open it otherwise.
 async function openSource(item) {
   const dest = sourceDestination(item);
   if (dest === '#') return;
-  const targets = [dest, item.url].map((x) => x.split('#')[0]);
+  const targets = [dest, M.sourceOf(item).url].map((x) => x.split('#')[0]);
   const tabs = await chrome.tabs.query({});
   const tab = tabs.find((t) => t.url && targets.includes(t.url.split('#')[0]));
   if (tab) {
@@ -207,7 +209,9 @@ async function render() {
   let group = null;
   groupBlocks = [];
   queue.forEach((item, idx) => {
-    if (item.url !== lastUrl) {
+    const sourceInfo = M.sourceOf(item);
+    const locator = M.locatorOf(item);
+    if (sourceInfo.url !== lastUrl) {
       group = document.createElement('div');
       group.className = 'group';
       const groupIdx = groupBlocks.length;
@@ -222,7 +226,7 @@ async function render() {
       });
       const src = document.createElement('a');
       src.className = 'source';
-      src.title = item.url;
+      src.title = sourceInfo.url;
       src.href = sourceDestination(item);
       src.draggable = false; // links drag natively and would hijack group drags
       src.addEventListener('click', (e) => {
@@ -231,14 +235,14 @@ async function render() {
       });
       const icon = document.createElement('img');
       icon.className = 'favicon';
-      icon.src = faviconUrl(item.url);
+      icon.src = faviconUrl(sourceInfo.url);
       icon.draggable = false;
       const label = document.createElement('span');
-      label.textContent = item.title;
+      label.textContent = sourceInfo.title;
       src.append(icon, label);
       group.appendChild(src);
       listEl.appendChild(group);
-      lastUrl = item.url;
+      lastUrl = sourceInfo.url;
     }
     groupBlocks[groupBlocks.length - 1].push(item.id);
 
@@ -281,18 +285,19 @@ async function render() {
     num.className = 'num';
     num.textContent = `Q${idx + 1}`;
     const quote = document.createElement('blockquote');
-    quote.textContent = truncate(item.anchor.exact, 220);
-    quote.title = item.anchor.exact;
+    const contextText = M.textOf(item.selectedContext.flatMap((context) => context.parts));
+    quote.textContent = truncate(contextText || 'Image selection', 220);
+    quote.title = contextText;
     top.append(num, quote);
 
     const q = document.createElement('textarea');
     q.placeholder = 'Your query about this selection…';
-    q.value = item.question;
+    q.value = M.textOf(item.message.parts);
     q.addEventListener('change', async () => {
       const queueNow = await getQueue();
       const target = queueNow.find((x) => x.id === item.id);
       if (target) {
-        target.question = q.value.trim();
+        target.message = { role: 'user', parts: [M.textPart(q.value.trim())] };
         await setQueue(queueNow);
       }
     });
@@ -356,9 +361,10 @@ langSelect.addEventListener('change', () => {
 // the composed prompt leaves the machine — cite only the filename for those.
 // The full URL stays on the item for navigation and grouping.
 function sourceCitation(item, P) {
-  if (!/^file:/i.test(item.url)) return { title: item.title, url: item.url };
-  const filename = decodeURIComponent(item.url.split('#')[0].split('?')[0].split('/').pop());
-  const title = /^file:/i.test(item.title) ? filename : item.title;
+  const source = M.sourceOf(item);
+  if (!/^file:/i.test(source.url)) return { title: source.title, url: source.url };
+  const filename = decodeURIComponent(source.url.split('#')[0].split('?')[0].split('/').pop());
+  const title = /^file:/i.test(source.title) ? filename : source.title;
   return { title, url: `${P.localFile || 'local file'}: ${filename}` };
 }
 
@@ -369,19 +375,22 @@ function composePrompt(queue) {
   let lastUrl = null;
   let sourceIdx = 0;
   queue.forEach((item, idx) => {
-    if (item.url !== lastUrl) {
+    const source = M.sourceOf(item);
+    const locator = M.locatorOf(item);
+    if (source.url !== lastUrl) {
       sourceIdx += 1;
       const letter = String.fromCharCode(64 + sourceIdx); // A, B, C…
       const cite = sourceCitation(item, P);
       lines.push('', P.source(letter, cite.title, cite.url));
-      lastUrl = item.url;
+      lastUrl = source.url;
     }
-    const where = item.page ? P.pdfPage(item.page) : '';
-    lines.push('', P.excerpt(idx + 1, where, item.anchor.exact));
-    if (item.anchor.prefix || item.anchor.suffix) {
-      lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
+    const where = locator.page ? P.pdfPage(locator.page) : '';
+    const contextText = M.textOf(item.selectedContext.flatMap((context) => context.parts));
+    lines.push('', P.excerpt(idx + 1, where, contextText || '[Image selection]'));
+    if (locator.prefix || locator.suffix) {
+      lines.push(P.context(locator.prefix, locator.suffix));
     }
-    lines.push(P.question(item.question));
+    lines.push(P.question(M.textOf(item.message.parts)));
   });
 
   return lines.join('\n');
