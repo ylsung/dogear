@@ -190,6 +190,22 @@ footer {
 #manual-handoff summary { cursor: pointer; font-weight: 600; font-size: 12px; }
 #manual-handoff p { margin: 6px 0; color: var(--textMuted); font-size: 11.5px; line-height: 1.35; }
 #manual-assets { display: flex; gap: 5px; flex-wrap: wrap; }
+.handoff-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: var(--selectedBg);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: grab;
+}
+.handoff-all:active, .handoff-asset:active { cursor: grabbing; }
 .handoff-asset {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;

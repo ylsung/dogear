@@ -39,7 +39,8 @@ queue model:
      into an open chat tab, leaving it in the box for you to review and send.
    - **Copy prompt** puts the text on the clipboard for any other chat. The side
      panel opens a **Manual handoff** tray containing matching, labeled images;
-     drag them into the destination composer or use **Save** if it rejects dragging.
+     drag all images together (or one at a time) into the destination composer,
+     or use **Save** if it rejects dragging.
 
 Images are kept in extension-local storage while you collect and edit questions.
 Dogear only hands them to a website when you choose a delivery action or drag an
