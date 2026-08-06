@@ -545,58 +545,51 @@ async function renderManualHandoff(queue) {
   if (!assets.length) return;
   handoffSummaryEl.textContent = `Manual handoff · ${assets.length} ${assets.length === 1 ? 'image' : 'images'}`;
 
-  function addFilesToDrag(event, selectedAssets) {
-    // A draggable DOM element gets default text/html payloads. Some chat
-    // composers prefer that text over files, which previously pasted only the
-    // displayed filename. Strip all default data and expose File objects only.
-    event.stopPropagation();
-    event.dataTransfer.clearData();
-    for (const asset of selectedAssets) {
-      event.dataTransfer.items.add(new File(
-        [asset.record.blob],
-        asset.deliveredName,
-        { type: asset.record.mimeType, lastModified: asset.record.createdAt },
-      ));
-    }
-    event.dataTransfer.effectAllowed = 'copy';
-  }
-
-  if (assets.length > 1) {
-    const all = document.createElement('div');
-    all.className = 'handoff-all';
-    all.draggable = true;
-    all.title = `Drag all ${assets.length} images into a chat composer`;
-    all.textContent = `▦ Drag all ${assets.length} images together`;
-    all.addEventListener('dragstart', (event) => addFilesToDrag(event, assets));
-    handoffAssetsEl.appendChild(all);
-  }
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'handoff-all';
+  all.title = `Attach all ${assets.length} images to the active tab`;
+  all.textContent = `▦ Attach all ${assets.length} ${assets.length === 1 ? 'image' : 'images'} to this tab`;
+  all.addEventListener('click', async () => {
+    all.disabled = true;
+    await attachAssetsToCurrentTab(assets);
+    all.disabled = false;
+  });
+  handoffAssetsEl.appendChild(all);
 
   for (const asset of assets) {
     const row = document.createElement('div');
     row.className = 'handoff-asset';
-    row.draggable = true;
-    row.title = 'Drag this image into a chat composer';
     const url = URL.createObjectURL(asset.record.blob);
     liveObjectUrls.push(url);
     const img = document.createElement('img');
     img.src = url;
     img.alt = '';
-    img.draggable = false;
     const label = document.createElement('span');
     label.textContent = `${asset.label} · ${asset.deliveredName}`;
+    const tools = document.createElement('div');
+    tools.className = 'handoff-tools';
+    const attach = document.createElement('button');
+    attach.type = 'button';
+    attach.textContent = 'Attach';
+    attach.title = 'Attach this image to the active tab';
+    attach.addEventListener('click', async () => {
+      attach.disabled = true;
+      await attachAssetsToCurrentTab([asset]);
+      attach.disabled = false;
+    });
     const download = document.createElement('button');
     download.type = 'button';
-    download.draggable = false;
     download.textContent = 'Save';
-    download.title = 'Save this image if drag-and-drop is not accepted';
+    download.title = 'Save this image if the destination uploader is not accessible';
     download.addEventListener('click', () => {
       const link = document.createElement('a');
       link.href = url;
       link.download = asset.deliveredName;
       link.click();
     });
-    row.addEventListener('dragstart', (event) => addFilesToDrag(event, [asset]));
-    row.append(img, label, download);
+    tools.append(attach, download);
+    row.append(img, label, tools);
     handoffAssetsEl.appendChild(row);
   }
 }
@@ -609,9 +602,7 @@ document.getElementById('copy').addEventListener('click', async () => {
   await navigator.clipboard.writeText(delivery.text);
   if (delivery.assets.length) {
     handoffEl.open = true;
-    note(delivery.assets.length > 1
-      ? `Prompt copied — use “Drag all ${delivery.assets.length} images together” above.`
-      : 'Prompt copied — drag the labeled image above into any chat.');
+    note(`Prompt copied — open the destination chat, then click “Attach all ${delivery.assets.length} ${delivery.assets.length === 1 ? 'image' : 'images'} to this tab.”`);
   } else {
     note('Prompt copied — paste it into any chat.');
   }
@@ -666,18 +657,27 @@ function injectPrompt(text) {
   return document.execCommand('insertText', false, text);
 }
 
-// Runs inside a supported chat tab. Reconstructs one local image as a File and
-// routes it through the page's own file input. One file per invocation keeps
-// extension messages bounded even when a request has several large images.
-function injectFile(payload) {
-  const binary = atob(payload.dataUrl.split(',')[1]);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  const file = new File([bytes], payload.name, { type: payload.mimeType });
+// Runs inside a destination tab. Reconstructing every image in a single
+// DataTransfer is important: repeated one-file changes cause some uploaders to
+// replace the previous selection and retain only the last image.
+function injectFiles(payloads) {
   const transfer = new DataTransfer();
-  transfer.items.add(file);
+  for (const payload of payloads) {
+    const binary = atob(payload.dataUrl.split(',')[1]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    transfer.items.add(new File([bytes], payload.name, {
+      type: payload.mimeType,
+      lastModified: payload.lastModified,
+    }));
+  }
   const inputs = [...document.querySelectorAll('input[type="file"]')];
-  const input = inputs.find((candidate) => /image|\*/i.test(candidate.accept || '')) || inputs[0];
+  const acceptsImages = (candidate) => /image|\*|png|jpe?g|webp/i.test(candidate.accept || '');
+  const input =
+    inputs.find((candidate) => candidate.multiple && acceptsImages(candidate)) ||
+    inputs.find(acceptsImages) ||
+    inputs.find((candidate) => candidate.multiple) ||
+    inputs[0];
   if (input) {
     try {
       const setter = Object.getOwnPropertyDescriptor(
@@ -687,7 +687,7 @@ function injectFile(payload) {
       setter.call(input, transfer.files);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
+      return { ok: true, count: transfer.files.length, method: 'input' };
     } catch (_) {
       // Fall through to a synthetic drop for composers without a file input.
     }
@@ -697,13 +697,13 @@ function injectFile(payload) {
     document.querySelector('div[contenteditable="true"].ProseMirror') ||
     document.querySelector('main div[contenteditable="true"]') ||
     document.querySelector('main textarea');
-  if (!composer) return false;
+  if (!composer) return { ok: false, count: 0 };
   composer.dispatchEvent(new DragEvent('drop', {
     bubbles: true,
     cancelable: true,
     dataTransfer: transfer,
   }));
-  return true;
+  return { ok: true, count: transfer.files.length, method: 'drop' };
 }
 
 function dataUrlForBlob(blob) {
@@ -713,6 +713,40 @@ function dataUrlForBlob(blob) {
     reader.onerror = () => reject(reader.error || new Error('Could not read attachment.'));
     reader.readAsDataURL(blob);
   });
+}
+
+async function payloadsForAssets(assets) {
+  return Promise.all(assets.map(async (asset) => ({
+    dataUrl: await dataUrlForBlob(asset.record.blob),
+    name: asset.deliveredName,
+    mimeType: asset.record.mimeType,
+    lastModified: asset.record.createdAt,
+  })));
+}
+
+async function attachAssetsToTab(tab, assets) {
+  if (!tab?.id || !assets.length) return false;
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: injectFiles,
+      args: [await payloadsForAssets(assets)],
+    });
+    return result?.result?.ok && result.result.count === assets.length;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function attachAssetsToCurrentTab(assets) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const attached = await attachAssetsToTab(tab, assets);
+  if (attached) {
+    note(`Attached ${assets.length} ${assets.length === 1 ? 'image' : 'images'} to this tab.`);
+  } else {
+    note('Could not find an image uploader in this tab. Open its attachment menu and try again, or use Save.');
+  }
+  return attached;
 }
 
 async function sendToChat(kind) {
@@ -732,27 +766,8 @@ async function sendToChat(kind) {
   // Inject first, focus after: once the chat tab is focused the side panel
   // loses focus and clipboard writes are rejected ("Document is not focused").
   const tab = tabs.find((t) => t.active) || tabs[0];
-  const failedAssets = [];
-  for (const asset of delivery.assets) {
-    let attached = false;
-    try {
-      const [result] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: injectFile,
-        args: [{
-          dataUrl: await dataUrlForBlob(asset.record.blob),
-          name: asset.deliveredName,
-          mimeType: asset.record.mimeType,
-        }],
-      });
-      attached = !!result?.result;
-    } catch (_) {
-      attached = false;
-    }
-    if (!attached) failedAssets.push(asset);
-    // Give the site's uploader a moment to consume each synthetic change.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
+  const assetsAttached = await attachAssetsToTab(tab, delivery.assets);
+  const failedAssets = delivery.assets.length && !assetsAttached ? delivery.assets : [];
   let inserted = false;
   try {
     const [result] = await chrome.scripting.executeScript({
@@ -769,7 +784,7 @@ async function sendToChat(kind) {
     await chrome.tabs.update(tab.id, { active: true });
     if (failedAssets.length) {
       handoffEl.open = true;
-      note(`Prompt inserted, but ${failedAssets.map((asset) => asset.label).join(', ')} still ${failedAssets.length === 1 ? 'needs' : 'need'} to be dragged into ${cfg.label}.`);
+      note(`Prompt inserted, but the images still need attaching. Open ${cfg.label}'s attachment menu and click “Attach all” in Dogear.`);
     } else {
       note(`Prompt${delivery.assets.length ? ' and images' : ''} inserted into ${cfg.label} — review and send.`);
     }
@@ -778,7 +793,7 @@ async function sendToChat(kind) {
       await navigator.clipboard.writeText(delivery.text);
       if (failedAssets.length) handoffEl.open = true;
       if (failedAssets.length) {
-        note(`Couldn't complete ${cfg.label} handoff — prompt copied; drag the labeled images above into the chat.`);
+        note(`Couldn't complete ${cfg.label} handoff — prompt copied; open its attachment menu and use Dogear's “Attach all” button.`);
       } else if (delivery.assets.length) {
         note(`Images attached, but the prompt was copied — paste it into ${cfg.label}.`);
       } else {
