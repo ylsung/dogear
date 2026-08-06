@@ -24,13 +24,13 @@
    - **→ ChatGPT / → Claude** attaches the images and inserts the composed prompt
      into an open chat tab, leaving it in the box for you to review and send.
    - **Copy prompt** puts the text on the clipboard for any other chat. The side
-     panel opens a **Manual handoff** tray containing matching, labeled images;
-     drag all images together (or one at a time) into the destination composer,
-     or use **Save** if it rejects dragging.
+     panel opens a **Manual handoff** tray containing matching, labeled images.
+     Open the destination chat in the active tab and choose **Attach all images to
+     this tab**, or use the individual **Attach** and **Save** controls.
 
 Images are kept in extension-local storage while you collect and edit questions.
-Dogear only hands them to a website when you choose a delivery action or drag an
-image from the manual handoff tray.
+Dogear only hands them to a website when you choose a delivery or attachment
+action from the manual handoff tray.
 
 ## PDFs
 
