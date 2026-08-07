@@ -712,18 +712,20 @@ async function injectFiles(payloads) {
     document.querySelector('main div[contenteditable="true"]') ||
     document.querySelector('main textarea');
   const scope = composer?.closest('form') || composer?.parentElement?.parentElement || document.body;
-  const chipSelector = [
-    '[data-testid*="attachment" i]',
-    '[data-testid*="file" i]',
-    '[class*="attachment" i]',
-    '[class*="file-preview" i]',
-    '[class*="upload-preview" i]',
+  const removeSelector = [
     'button[aria-label*="remove" i]',
+    'button[aria-label*="delete" i]',
+    'button[title*="remove" i]',
+    'button[title*="delete" i]',
+    'button[data-testid*="remove" i]',
+    'button[data-testid*="delete" i]',
   ].join(',');
-  const baselineCount = [...scope.querySelectorAll(chipSelector)].filter((element) =>
+  const isOutsideComposer = (element) =>
     element.getClientRects().length > 0 &&
-    !composer?.contains(element) && !element.contains(composer),
-  ).length;
+    !composer?.contains(element) && !element.contains(composer);
+  const baselineControls = new Set(
+    [...scope.querySelectorAll(removeSelector)].filter(isOutsideComposer),
+  );
   const inputs = [...document.querySelectorAll('input[type="file"]')];
   const acceptsImages = (candidate) => /image|\*|png|jpe?g|webp/i.test(candidate.accept || '');
   const input =
@@ -785,41 +787,61 @@ async function injectFiles(payloads) {
     }).map((payload) => payload.assetId);
   }
 
-  function candidateCount() {
-    return [...scope.querySelectorAll(chipSelector)].filter((element) =>
-      element.getClientRects().length > 0 &&
-      !composer?.contains(element) && !element.contains(composer),
-    ).length;
+  function removalControls() {
+    return [...scope.querySelectorAll(removeSelector)].filter((element) =>
+      isOutsideComposer(element) && !baselineControls.has(element),
+    );
   }
 
   // Wait briefly for React/Vue upload state to materialize attachment chips.
   let namedIds = [];
-  let observedCount = 0;
+  let controls = [];
   for (let attempt = 0; attempt < 12; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 150));
     namedIds = idsVisibleByName();
-    observedCount = candidateCount();
-    if (namedIds.length === allIds.length || observedCount > baselineCount) break;
+    controls = removalControls();
+    if (namedIds.length === allIds.length || controls.length >= allIds.length) break;
   }
 
   const mode = namedIds.length === allIds.length
     ? 'names'
-    : observedCount > baselineCount
-      ? 'count'
+    : controls.length >= allIds.length
+      ? 'controls'
       : null;
   if (!mode) {
     return { ok: true, count: transfer.files.length, method, monitoring: false };
   }
 
-  const expectedCount = observedCount;
+  const forcedRemoved = new Set();
+  const wiredControls = new WeakSet();
   let timer = null;
   let previous = '';
+
+  function wireRemovalControls() {
+    const current = removalControls();
+    const remainingIds = allIds.filter((id) => !forcedRemoved.has(id));
+    current.forEach((control, index) => {
+      if (wiredControls.has(control) || !remainingIds[index]) return;
+      wiredControls.add(control);
+      const assetId = remainingIds[index];
+      const removed = () => {
+        forcedRemoved.add(assetId);
+        setTimeout(report, 0);
+      };
+      control.addEventListener('pointerdown', removed, { capture: true, once: true });
+      control.addEventListener('click', removed, { capture: true, once: true });
+    });
+  }
+
   function report() {
-    const presentAssetIds = mode === 'names'
-      ? idsVisibleByName()
-      : candidateCount() >= expectedCount
-        ? allIds
-        : [];
+    wireRemovalControls();
+    let presentAssetIds;
+    if (mode === 'names') {
+      presentAssetIds = idsVisibleByName().filter((id) => !forcedRemoved.has(id));
+    } else {
+      const remainingIds = allIds.filter((id) => !forcedRemoved.has(id));
+      presentAssetIds = removalControls().length >= remainingIds.length ? remainingIds : [];
+    }
     const signature = presentAssetIds.join('|');
     if (signature === previous) return;
     previous = signature;
