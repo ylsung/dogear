@@ -267,8 +267,16 @@ async function render() {
       const groupIdx = groupBlocks.length;
       groupBlocks.push([]);
       group.dataset.groupIdx = String(groupIdx);
-      group.draggable = true;
-      group.addEventListener('dragstart', (e) => {
+      const sourceHeader = document.createElement('div');
+      sourceHeader.className = 'source-header';
+      const groupDragHandle = document.createElement('span');
+      groupDragHandle.className = 'drag-handle group-drag-handle';
+      groupDragHandle.draggable = true;
+      groupDragHandle.role = 'button';
+      groupDragHandle.tabIndex = 0;
+      groupDragHandle.title = 'Drag to reorder this source group';
+      groupDragHandle.textContent = '⋮⋮';
+      groupDragHandle.addEventListener('dragstart', (e) => {
         dragMode = 'group';
         draggedGroupIdx = groupIdx;
         e.dataTransfer.effectAllowed = 'move';
@@ -290,7 +298,8 @@ async function render() {
       const label = document.createElement('span');
       label.textContent = sourceInfo.title;
       src.append(icon, label);
-      group.appendChild(src);
+      sourceHeader.append(src, groupDragHandle);
+      group.appendChild(sourceHeader);
       listEl.appendChild(group);
       lastUrl = sourceInfo.url;
     }
@@ -299,11 +308,10 @@ async function render() {
     const card = document.createElement('div');
     card.className = 'card';
     card.dataset.id = item.id;
-    card.draggable = true;
     if (selectedIds.has(item.id)) card.classList.add('selected');
 
     card.addEventListener('click', async (e) => {
-      if (e.target.closest('.dogear-composer, textarea, input, button')) return;
+      if (e.target.closest('.dogear-composer, blockquote, .context-images, textarea, input, button, a')) return;
       if (e.shiftKey && lastAnchorId) {
         await selectRange(lastAnchorId, item.id);
       } else if (e.metaKey || e.ctrlKey) {
@@ -316,21 +324,6 @@ async function render() {
         lastAnchorId = item.id;
       }
       applySelectionClasses();
-    });
-
-    card.addEventListener('dragstart', (e) => {
-      if (e.target.closest('.dogear-composer, input, button')) {
-        e.preventDefault();
-        return;
-      }
-      e.stopPropagation(); // don't also start the enclosing group's drag
-      dragMode = 'card';
-      if (!selectedIds.has(item.id)) {
-        selectedIds = new Set([item.id]);
-        applySelectionClasses();
-      }
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', item.id);
     });
 
     const top = document.createElement('div');
@@ -411,6 +404,23 @@ async function render() {
 
     const tools = document.createElement('div');
     tools.className = 'tools';
+    const cardDragHandle = document.createElement('span');
+    cardDragHandle.className = 'drag-handle card-drag-handle';
+    cardDragHandle.draggable = true;
+    cardDragHandle.role = 'button';
+    cardDragHandle.tabIndex = 0;
+    cardDragHandle.title = 'Drag to reorder this question';
+    cardDragHandle.textContent = '⋮⋮';
+    cardDragHandle.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      dragMode = 'card';
+      if (!selectedIds.has(item.id)) {
+        selectedIds = new Set([item.id]);
+        applySelectionClasses();
+      }
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+    });
     const mk = (label, title, fn) => {
       const b = document.createElement('button');
       b.textContent = label;
@@ -419,6 +429,7 @@ async function render() {
       return b;
     };
     tools.append(
+      cardDragHandle,
       mk('＋ Image', 'Attach one or more images to this question', () => attachInput.click()),
       mk('↑', 'Move up', () => move(item.id, -1)),
       mk('↓', 'Move down', () => move(item.id, +1)),
