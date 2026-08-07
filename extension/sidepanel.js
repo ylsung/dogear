@@ -37,7 +37,10 @@ const handoffAssetsEl = document.getElementById('manual-assets');
 const liveObjectUrls = [];
 const handoffObjectUrls = [];
 const liveComposers = [];
-let quietQueueWrites = 0;
+const pendingQuietQueueWrites = new Map();
+let renderRequested = false;
+let renderRunning = false;
+let manualHandoffRenderVersion = 0;
 
 const SOFT_CAP = 10;
 const ATTACHMENT_STATUS_KEY = 'attachmentStatus';
@@ -51,9 +54,27 @@ async function setQueue(queue) {
   await chrome.storage.local.set({ queue });
 }
 
+function queueFingerprint(queue) {
+  return JSON.stringify(queue || []);
+}
+
+function consumeQuietQueueWrite(fingerprint) {
+  const count = pendingQuietQueueWrites.get(fingerprint) || 0;
+  if (!count) return false;
+  if (count === 1) pendingQuietQueueWrites.delete(fingerprint);
+  else pendingQuietQueueWrites.set(fingerprint, count - 1);
+  return true;
+}
+
 async function setQueueQuietly(queue) {
-  quietQueueWrites += 1;
-  await chrome.storage.local.set({ queue });
+  const fingerprint = queueFingerprint(queue);
+  pendingQuietQueueWrites.set(fingerprint, (pendingQuietQueueWrites.get(fingerprint) || 0) + 1);
+  try {
+    await chrome.storage.local.set({ queue });
+  } catch (error) {
+    consumeQuietQueueWrite(fingerprint);
+    throw error;
+  }
 }
 
 async function collectGarbage(queue) {
@@ -410,6 +431,21 @@ async function render() {
   await renderManualHandoff(queue);
 }
 
+async function scheduleRender() {
+  renderRequested = true;
+  if (renderRunning) return;
+  renderRunning = true;
+  try {
+    while (renderRequested) {
+      renderRequested = false;
+      await render();
+    }
+  } finally {
+    renderRunning = false;
+    if (renderRequested) scheduleRender();
+  }
+}
+
 async function move(id, delta) {
   const queue = await getQueue();
   const i = queue.findIndex((x) => x.id === id);
@@ -548,10 +584,12 @@ async function composeOrWarn() {
 }
 
 async function renderManualHandoff(queue) {
-  handoffObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+  const version = ++manualHandoffRenderVersion;
   const assets = await buildAssetPlan(queue);
   const { [ATTACHMENT_STATUS_KEY]: attachmentStatus = {} } =
     await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  if (version !== manualHandoffRenderVersion) return;
+  handoffObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
   handoffAssetsEl.replaceChildren();
   handoffEl.hidden = !assets.length;
   if (!assets.length) return;
@@ -1071,13 +1109,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
     return;
   }
   if (area === 'local' && changes.queue) {
-    if (quietQueueWrites > 0) {
-      quietQueueWrites -= 1;
+    if (consumeQuietQueueWrite(queueFingerprint(changes.queue.newValue))) {
+      getQueue().then(renderManualHandoff);
       return;
     }
-    render();
+    scheduleRender();
   }
 });
 
 updateHotkeyHint();
-render();
+scheduleRender();
