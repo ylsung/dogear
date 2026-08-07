@@ -35,10 +35,12 @@ const handoffEl = document.getElementById('manual-handoff');
 const handoffSummaryEl = document.getElementById('manual-summary');
 const handoffAssetsEl = document.getElementById('manual-assets');
 const liveObjectUrls = [];
+const handoffObjectUrls = [];
 const liveComposers = [];
 let quietQueueWrites = 0;
 
 const SOFT_CAP = 10;
+const ATTACHMENT_STATUS_KEY = 'attachmentStatus';
 
 async function getQueue() {
   const { queue = [] } = await chrome.storage.local.get('queue');
@@ -57,6 +59,13 @@ async function setQueueQuietly(queue) {
 async function collectGarbage(queue) {
   const referenced = queue.flatMap(M.assetIdsOf);
   await ASSETS.removeUnreferenced(referenced);
+  const keep = new Set(referenced);
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const next = Object.fromEntries(Object.entries(current).filter(([id]) => keep.has(id)));
+  if (Object.keys(next).length !== Object.keys(current).length) {
+    await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
+  }
 }
 
 function note(msg) {
@@ -539,7 +548,10 @@ async function composeOrWarn() {
 }
 
 async function renderManualHandoff(queue) {
+  handoffObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
   const assets = await buildAssetPlan(queue);
+  const { [ATTACHMENT_STATUS_KEY]: attachmentStatus = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
   handoffAssetsEl.replaceChildren();
   handoffEl.hidden = !assets.length;
   if (!assets.length) return;
@@ -548,8 +560,13 @@ async function renderManualHandoff(queue) {
   const all = document.createElement('button');
   all.type = 'button';
   all.className = 'handoff-all';
+  const attachedCount = assets.filter((asset) => attachmentStatus[asset.id]?.state === 'attached').length;
+  const allAttached = attachedCount === assets.length;
+  all.classList.toggle('attached', allAttached);
   all.title = `Attach all ${assets.length} images to the active tab`;
-  all.textContent = `▦ Attach all ${assets.length} ${assets.length === 1 ? 'image' : 'images'} to this tab`;
+  all.textContent = allAttached
+    ? `✓ All ${assets.length} ${assets.length === 1 ? 'image is' : 'images are'} attached`
+    : `▦ Attach all ${assets.length} ${assets.length === 1 ? 'image' : 'images'} to this tab`;
   all.addEventListener('click', async () => {
     all.disabled = true;
     await attachAssetsToCurrentTab(assets);
@@ -557,16 +574,32 @@ async function renderManualHandoff(queue) {
   });
   handoffAssetsEl.appendChild(all);
 
+  if (attachedCount) {
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'handoff-reset';
+    reset.textContent = 'Reset attachment status';
+    reset.addEventListener('click', () => resetAttachmentStatus(assets));
+    handoffAssetsEl.appendChild(reset);
+  }
+
   for (const asset of assets) {
     const row = document.createElement('div');
     row.className = 'handoff-asset';
+    const status = attachmentStatus[asset.id];
+    row.classList.toggle('attached', status?.state === 'attached');
+    if (status?.state === 'attached') {
+      row.title = status.monitored
+        ? 'Attached; Dogear is watching this tab for removal'
+        : 'Attached; use Reset if it is removed from the destination';
+    }
     const url = URL.createObjectURL(asset.record.blob);
-    liveObjectUrls.push(url);
+    handoffObjectUrls.push(url);
     const img = document.createElement('img');
     img.src = url;
     img.alt = '';
     const label = document.createElement('span');
-    label.textContent = `${asset.label} · ${asset.deliveredName}`;
+    label.textContent = `${status?.state === 'attached' ? '✓ ' : ''}${asset.label} · ${asset.deliveredName}`;
     const tools = document.createElement('div');
     tools.className = 'handoff-tools';
     const attach = document.createElement('button');
@@ -660,7 +693,9 @@ function injectPrompt(text) {
 // Runs inside a destination tab. Reconstructing every image in a single
 // DataTransfer is important: repeated one-file changes cause some uploaders to
 // replace the previous selection and retain only the last image.
-function injectFiles(payloads) {
+async function injectFiles(payloads) {
+  globalThis.__dogearAttachmentMonitor?.disconnect?.();
+
   const transfer = new DataTransfer();
   for (const payload of payloads) {
     const binary = atob(payload.dataUrl.split(',')[1]);
@@ -671,6 +706,24 @@ function injectFiles(payloads) {
       lastModified: payload.lastModified,
     }));
   }
+  const composer =
+    document.querySelector('#prompt-textarea') ||
+    document.querySelector('div[contenteditable="true"].ProseMirror') ||
+    document.querySelector('main div[contenteditable="true"]') ||
+    document.querySelector('main textarea');
+  const scope = composer?.closest('form') || composer?.parentElement?.parentElement || document.body;
+  const chipSelector = [
+    '[data-testid*="attachment" i]',
+    '[data-testid*="file" i]',
+    '[class*="attachment" i]',
+    '[class*="file-preview" i]',
+    '[class*="upload-preview" i]',
+    'button[aria-label*="remove" i]',
+  ].join(',');
+  const baselineCount = [...scope.querySelectorAll(chipSelector)].filter((element) =>
+    element.getClientRects().length > 0 &&
+    !composer?.contains(element) && !element.contains(composer),
+  ).length;
   const inputs = [...document.querySelectorAll('input[type="file"]')];
   const acceptsImages = (candidate) => /image|\*|png|jpe?g|webp/i.test(candidate.accept || '');
   const input =
@@ -678,6 +731,8 @@ function injectFiles(payloads) {
     inputs.find(acceptsImages) ||
     inputs.find((candidate) => candidate.multiple) ||
     inputs[0];
+  let delivered = false;
+  let method = '';
   if (input) {
     try {
       const setter = Object.getOwnPropertyDescriptor(
@@ -687,23 +742,112 @@ function injectFiles(payloads) {
       setter.call(input, transfer.files);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true, count: transfer.files.length, method: 'input' };
+      delivered = true;
+      method = 'input';
+      // Continue below: after dispatch, inspect the destination's attachment UI
+      // and install a live removal observer when its chips can be identified.
     } catch (_) {
       // Fall through to a synthetic drop for composers without a file input.
     }
   }
-  const composer =
-    document.querySelector('#prompt-textarea') ||
-    document.querySelector('div[contenteditable="true"].ProseMirror') ||
-    document.querySelector('main div[contenteditable="true"]') ||
-    document.querySelector('main textarea');
-  if (!composer) return { ok: false, count: 0 };
-  composer.dispatchEvent(new DragEvent('drop', {
-    bubbles: true,
-    cancelable: true,
-    dataTransfer: transfer,
-  }));
-  return { ok: true, count: transfer.files.length, method: 'drop' };
+  if (!delivered) {
+    if (!composer) return { ok: false, count: 0, monitoring: false };
+    composer.dispatchEvent(new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+    method = 'drop';
+  }
+
+  const allIds = payloads.map((payload) => payload.assetId);
+
+  function searchableElements() {
+    return [...scope.querySelectorAll('*')].filter((element) =>
+      element.getClientRects().length > 0 &&
+      !composer?.contains(element) && !element.contains(composer),
+    );
+  }
+
+  function idsVisibleByName() {
+    const elements = searchableElements();
+    return payloads.filter((payload) => {
+      const token = payload.name.toLowerCase();
+      return elements.some((element) => {
+        const attributes = [
+          element.getAttribute('aria-label'),
+          element.getAttribute('title'),
+          element.getAttribute('data-testid'),
+          element.childElementCount === 0 ? element.textContent : '',
+        ].filter(Boolean).join(' ').toLowerCase();
+        return attributes.includes(token);
+      });
+    }).map((payload) => payload.assetId);
+  }
+
+  function candidateCount() {
+    return [...scope.querySelectorAll(chipSelector)].filter((element) =>
+      element.getClientRects().length > 0 &&
+      !composer?.contains(element) && !element.contains(composer),
+    ).length;
+  }
+
+  // Wait briefly for React/Vue upload state to materialize attachment chips.
+  let namedIds = [];
+  let observedCount = 0;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    namedIds = idsVisibleByName();
+    observedCount = candidateCount();
+    if (namedIds.length === allIds.length || observedCount > baselineCount) break;
+  }
+
+  const mode = namedIds.length === allIds.length
+    ? 'names'
+    : observedCount > baselineCount
+      ? 'count'
+      : null;
+  if (!mode) {
+    return { ok: true, count: transfer.files.length, method, monitoring: false };
+  }
+
+  const expectedCount = observedCount;
+  let timer = null;
+  let previous = '';
+  function report() {
+    const presentAssetIds = mode === 'names'
+      ? idsVisibleByName()
+      : candidateCount() >= expectedCount
+        ? allIds
+        : [];
+    const signature = presentAssetIds.join('|');
+    if (signature === previous) return;
+    previous = signature;
+    chrome.runtime.sendMessage({
+      type: 'dogear-attachment-status',
+      assetIds: allIds,
+      presentAssetIds,
+    }).catch(() => {});
+  }
+  const observer = new MutationObserver(() => {
+    clearTimeout(timer);
+    timer = setTimeout(report, 120);
+  });
+  observer.observe(scope, { childList: true, subtree: true, attributes: true });
+  const monitor = {
+    disconnect() {
+      clearTimeout(timer);
+      observer.disconnect();
+    },
+  };
+  globalThis.__dogearAttachmentMonitor = monitor;
+  report();
+  return { ok: true, count: transfer.files.length, method, monitoring: true };
+}
+
+function stopAttachmentMonitor() {
+  globalThis.__dogearAttachmentMonitor?.disconnect?.();
+  delete globalThis.__dogearAttachmentMonitor;
 }
 
 function dataUrlForBlob(blob) {
@@ -717,6 +861,7 @@ function dataUrlForBlob(blob) {
 
 async function payloadsForAssets(assets) {
   return Promise.all(assets.map(async (asset) => ({
+    assetId: asset.id,
     dataUrl: await dataUrlForBlob(asset.record.blob),
     name: asset.deliveredName,
     mimeType: asset.record.mimeType,
@@ -725,28 +870,78 @@ async function payloadsForAssets(assets) {
 }
 
 async function attachAssetsToTab(tab, assets) {
-  if (!tab?.id || !assets.length) return false;
+  if (!tab?.id || !assets.length) return { ok: false, monitoring: false };
   try {
+    await clearAttachmentTracking(assets);
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: injectFiles,
       args: [await payloadsForAssets(assets)],
     });
-    return result?.result?.ok && result.result.count === assets.length;
+    const outcome = result?.result;
+    if (!outcome?.ok || outcome.count !== assets.length) {
+      return { ok: false, monitoring: false };
+    }
+    await markAttachmentStatus(assets, tab.id, !!outcome.monitoring);
+    return { ok: true, monitoring: !!outcome.monitoring };
   } catch (_) {
-    return false;
+    return { ok: false, monitoring: false };
   }
+}
+
+async function markAttachmentStatus(assets, tabId, monitored) {
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const next = { ...current };
+  for (const asset of assets) {
+    next[asset.id] = {
+      state: 'attached',
+      tabId,
+      monitored,
+      updatedAt: Date.now(),
+    };
+  }
+  await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
+}
+
+async function resetAttachmentStatus(assets) {
+  await clearAttachmentTracking(assets);
+  note('Attachment status reset.');
+}
+
+async function clearAttachmentTracking(assets) {
+  const ids = new Set(assets.map((asset) => asset.id));
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const tabIds = [...new Set(
+    Object.entries(current)
+      .filter(([id]) => ids.has(id))
+      .map(([, status]) => status.tabId),
+  )];
+  await Promise.all(tabIds.map((tabId) => chrome.scripting.executeScript({
+    target: { tabId },
+    func: stopAttachmentMonitor,
+  }).catch(() => {})));
+  // One destination observer may own several assets. If it is stopped, reset
+  // every status from that tab so no row remains green without live tracking.
+  const resetTabs = new Set(tabIds);
+  const next = Object.fromEntries(Object.entries(current).filter(([id, status]) =>
+    !ids.has(id) && !resetTabs.has(status.tabId),
+  ));
+  await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
 }
 
 async function attachAssetsToCurrentTab(assets) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const attached = await attachAssetsToTab(tab, assets);
-  if (attached) {
-    note(`Attached ${assets.length} ${assets.length === 1 ? 'image' : 'images'} to this tab.`);
+  const outcome = await attachAssetsToTab(tab, assets);
+  if (outcome.ok) {
+    note(outcome.monitoring
+      ? `Attached ${assets.length} ${assets.length === 1 ? 'image' : 'images'}; removal tracking is active.`
+      : `Attached ${assets.length} ${assets.length === 1 ? 'image' : 'images'}; use Reset if the site removes them.`);
   } else {
     note('Could not find an image uploader in this tab. Open its attachment menu and try again, or use Save.');
   }
-  return attached;
+  return outcome.ok;
 }
 
 async function sendToChat(kind) {
@@ -766,8 +961,10 @@ async function sendToChat(kind) {
   // Inject first, focus after: once the chat tab is focused the side panel
   // loses focus and clipboard writes are rejected ("Document is not focused").
   const tab = tabs.find((t) => t.active) || tabs[0];
-  const assetsAttached = await attachAssetsToTab(tab, delivery.assets);
-  const failedAssets = delivery.assets.length && !assetsAttached ? delivery.assets : [];
+  const attachmentOutcome = delivery.assets.length
+    ? await attachAssetsToTab(tab, delivery.assets)
+    : { ok: true, monitoring: false };
+  const failedAssets = delivery.assets.length && !attachmentOutcome.ok ? delivery.assets : [];
   let inserted = false;
   try {
     const [result] = await chrome.scripting.executeScript({
@@ -847,12 +1044,17 @@ async function updateHotkeyHint() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.queue) return;
-  if (quietQueueWrites > 0) {
-    quietQueueWrites -= 1;
+  if (area === 'session' && changes[ATTACHMENT_STATUS_KEY]) {
+    getQueue().then(renderManualHandoff);
     return;
   }
-  render();
+  if (area === 'local' && changes.queue) {
+    if (quietQueueWrites > 0) {
+      quietQueueWrites -= 1;
+      return;
+    }
+    render();
+  }
 });
 
 updateHotkeyHint();

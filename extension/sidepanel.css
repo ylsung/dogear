@@ -207,6 +207,22 @@ footer {
 }
 .handoff-all:hover { background: var(--highlight); }
 .handoff-all:disabled { cursor: wait; opacity: .7; }
+.handoff-all.attached,
+.handoff-asset.attached {
+  border-color: var(--successBorder);
+  background: var(--successBg);
+}
+.handoff-all.attached { color: var(--success); }
+.handoff-reset {
+  width: 100%;
+  border: 0;
+  padding: 2px 4px;
+  color: var(--textMuted);
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 10.5px;
+}
 .handoff-asset {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
