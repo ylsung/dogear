@@ -25,6 +25,48 @@ chrome.sidePanel
   .catch(() => {});
 
 const recentSelectionFrames = new Map();
+const ATTACHMENT_STATUS_KEY = 'attachmentStatus';
+
+async function clearAttachmentStatusForTab(tabId) {
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const next = Object.fromEntries(
+    Object.entries(current).filter(([, status]) => status.tabId !== tabId),
+  );
+  if (Object.keys(next).length !== Object.keys(current).length) {
+    await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
+  }
+}
+
+async function updateObservedAttachmentStatus(msg, sender) {
+  if (!sender.tab || !Array.isArray(msg.assetIds) || !Array.isArray(msg.presentAssetIds)) return;
+  const { queue = [] } = await chrome.storage.local.get('queue');
+  const validIds = new Set(queue.flatMap(DOGEAR_MODEL.assetIdsOf));
+  const batchIds = msg.assetIds.filter((id) => typeof id === 'string' && validIds.has(id));
+  const presentIds = new Set(
+    msg.presentAssetIds.filter((id) => typeof id === 'string' && validIds.has(id)),
+  );
+  if (!batchIds.length) return;
+
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const next = { ...current };
+  for (const id of batchIds) {
+    if (presentIds.has(id)) {
+      next[id] = {
+        state: 'attached',
+        tabId: sender.tab.id,
+        monitored: true,
+        updatedAt: Date.now(),
+      };
+    } else if (next[id]?.tabId === sender.tab.id) {
+      delete next[id];
+    }
+  }
+  if (JSON.stringify(next) !== JSON.stringify(current)) {
+    await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
+  }
+}
 
 function openAsk(tabId, requestedFrameId) {
   const recent = recentSelectionFrames.get(tabId);
@@ -53,6 +95,9 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
   if (msg && msg.type === 'dogear-open-panel' && sender.tab && sender.tab.id != null) {
     chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
+  }
+  if (msg && msg.type === 'dogear-attachment-status') {
+    updateObservedAttachmentStatus(msg, sender).catch(() => {});
   }
 });
 
@@ -149,6 +194,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.queue) updateBadge();
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => recentSelectionFrames.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  recentSelectionFrames.delete(tabId);
+  clearAttachmentStatusForTab(tabId).catch(() => {});
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'loading' || changeInfo.url) {
+    clearAttachmentStatusForTab(tabId).catch(() => {});
+  }
+});
 
 updateBadge();
