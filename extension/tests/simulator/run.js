@@ -127,7 +127,7 @@ async function main() {
     page = context.pages()[0] || await context.newPage();
     await page.goto(`http://127.0.0.1:${fixturePort}/chat.html?target=chatgpt`);
 
-    await worker.evaluate(async () => {
+    const seededAssets = await worker.evaluate(async () => {
       await chrome.storage.local.clear();
       await chrome.storage.session.clear();
       const assets = [];
@@ -144,16 +144,10 @@ async function main() {
         id: crypto.randomUUID(),
         source: { url: 'http://127.0.0.1/simulator', title: 'Attachment simulator' },
         locator: { type: 'text-quote', exact: 'Three simulated images', prefix: '', suffix: '', start: 0 },
-        question: '',
+        question: 'Compare the selected text.',
       });
-      item.message.parts = [
-        DOGEAR_MODEL.textPart('Compare '),
-        ...assets.flatMap((asset, index) => [
-          DOGEAR_MODEL.assetPart(asset.id, asset.mimeType, asset.displayName),
-          DOGEAR_MODEL.textPart(index === assets.length - 1 ? '.' : ', '),
-        ]),
-      ];
       await chrome.storage.local.set({ queue: [item] });
+      return assets.map(({ id, mimeType, displayName }) => ({ id, mimeType, displayName }));
     });
 
     await page.locator('#open-dogear').click();
@@ -163,10 +157,71 @@ async function main() {
     }, 'Dogear side-panel target');
     sideClient = await CDP({ target: sideTarget, port: debugPort });
     await Promise.all([sideClient.Runtime.enable(), sideClient.Page.enable()]);
+    await waitFor(() => sideValue(sideClient, `document.querySelectorAll('.card').length === 1`), 'initial queue card');
+    const initiallyHidden = await sideValue(sideClient, `document.querySelector('#manual-handoff').hidden`);
+    if (!initiallyHidden) throw new Error('Manual handoff should start hidden for a text-only question.');
+
+    // Reproduce the old stale-render sequence: an in-composer save was treated
+    // as "quiet", and an unmatched quiet-write counter could then suppress
+    // later captures from the content script. The image save must refresh only
+    // the handoff tray; the external captures must refresh the full queue.
+    await sideValue(sideClient, `(async () => {
+      const assets = ${JSON.stringify(seededAssets)};
+      const queue = await getQueue();
+      queue[0].message.parts = [
+        DOGEAR_MODEL.textPart('Compare '),
+        ...assets.flatMap((asset, index) => [
+          DOGEAR_MODEL.assetPart(asset.id, asset.mimeType, asset.displayName),
+          DOGEAR_MODEL.textPart(index === assets.length - 1 ? '.' : ', '),
+        ]),
+      ];
+      await setQueueQuietly(queue);
+      await setQueueQuietly(queue);
+    })()`);
     await waitFor(
-      () => sideValue(sideClient, `document.querySelectorAll('.handoff-asset').length === 3`),
-      'three Dogear handoff rows',
+      () => sideValue(sideClient, `!document.querySelector('#manual-handoff').hidden && document.querySelectorAll('.handoff-asset').length === 3`),
+      'manual handoff refresh after a quiet image edit',
     );
+
+    await worker.evaluate(async (assets) => {
+      const queue = (await chrome.storage.local.get('queue')).queue;
+      const firstAsset = await DOGEAR_ASSETS.get(assets[0].id);
+      queue.push(DOGEAR_MODEL.createImageRequest({
+        id: crypto.randomUUID(),
+        source: { url: 'http://127.0.0.1/simulator', title: 'Attachment simulator' },
+        locator: { type: 'region', x: 10, y: 10, width: 160, height: 100 },
+        asset: firstAsset,
+        messageParts: [DOGEAR_MODEL.textPart('Explain this screenshot.')],
+      }));
+      queue.push(DOGEAR_MODEL.createTextRequest({
+        id: crypto.randomUUID(),
+        source: { url: 'http://127.0.0.1/simulator', title: 'Attachment simulator' },
+        locator: { type: 'text-quote', exact: 'A later text selection', prefix: '', suffix: '', start: 25 },
+        question: 'Explain this selection.',
+      }));
+      await chrome.storage.local.set({ queue });
+    }, seededAssets);
+    await waitFor(
+      () => sideValue(sideClient, `document.querySelectorAll('.card').length === 3 && document.querySelector('#count').textContent === '3 queries'`),
+      'two externally captured questions in the visible queue',
+    );
+
+    const interactionState = await sideValue(sideClient, `({
+      cardsAreStatic: [...document.querySelectorAll('.card')].every((element) => !element.draggable),
+      groupsAreStatic: [...document.querySelectorAll('.group')].every((element) => !element.draggable),
+      handlesAreDraggable: [...document.querySelectorAll('.drag-handle')].every((element) => element.draggable),
+      imageIsDraggable: document.querySelector('.context-images img')?.draggable === true,
+      textIsSelectable: getComputedStyle(document.querySelector('blockquote')).userSelect === 'text',
+    })`);
+    if (Object.values(interactionState).some((value) => !value)) {
+      throw new Error(`Queue interaction regression: ${JSON.stringify(interactionState)}`);
+    }
+    report.push({
+      label: 'Queue synchronization and content interaction',
+      handoffRows: 3,
+      visibleQueries: 3,
+      ...interactionState,
+    });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);
 
     async function attachedState() {
@@ -193,6 +248,7 @@ async function main() {
       await recordStep(`${label}: ${expected} attached row${expected === 1 ? '' : 's'}`);
     }
 
+    await recordStep('PASS: handoff visible, 3 captures rendered, content selectable, handle-only reorder');
     await recordStep('ChatGPT-style fixture: ready to attach three images');
     await sideValue(sideClient, `document.querySelector('.handoff-all').click()`);
     await expectAttached(3, 'ChatGPT attach-all');
