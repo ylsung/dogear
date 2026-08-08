@@ -73,20 +73,21 @@
       chip.dataset.assetId = part.assetId;
       chip.dataset.mediaType = part.mediaType || 'application/octet-stream';
       chip.dataset.label = part.label || 'image';
-      chip.title = part.label || 'Attached image';
+      const displayName = part.label || 'Attached image';
+      chip.title = displayName;
+      chip.setAttribute('aria-label', displayName);
       chip.draggable = true;
 
       const preview = document.createElement('img');
       preview.alt = '';
-      const label = document.createElement('span');
-      label.textContent = part.label || 'image';
+      preview.title = displayName;
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'dogear-remove-asset';
       remove.title = `Remove ${part.label || 'image'}`;
       remove.setAttribute('aria-label', remove.title);
       remove.textContent = '×';
-      chip.append(preview, label, remove);
+      chip.append(preview, remove);
 
       if (options.resolveAssetUrl) {
         try {
