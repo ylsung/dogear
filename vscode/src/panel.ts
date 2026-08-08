@@ -269,6 +269,10 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   private async openSource(id: string): Promise<void> {
     const item = this.store.get().find((x) => x.id === id);
     if (!item) return;
+    if (item.surface === 'image') {
+      await vscode.commands.executeCommand('vscode.open', vscode.Uri.parse(item.url));
+      return;
+    }
     if (item.surface === 'codex-chat') {
       await vscode.commands.executeCommand('chatgpt.openSidebar');
       return;

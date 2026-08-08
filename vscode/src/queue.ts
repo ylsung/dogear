@@ -35,17 +35,19 @@ export interface QueueItem {
   url: string;
   title: string;
   message: UserMessage;
+  selectedContext: MessagePart[];
   page: number | null; // always null in VSCode; kept for compose parity
   lines: { start: number; end: number } | null; // 1-based; null for chat excerpts
   languageId: string;
-  surface?: 'editor' | 'markdown-preview' | 'codex-chat' | 'claude-chat';
+  surface?: 'editor' | 'image' | 'markdown-preview' | 'codex-chat' | 'claude-chat';
   createdAt: number;
   anchor: Anchor;
 }
 
-interface LegacyQueueItem extends Omit<QueueItem, 'message'> {
+interface LegacyQueueItem extends Omit<QueueItem, 'message' | 'selectedContext'> {
   question?: string;
   message?: UserMessage;
+  selectedContext?: MessagePart[];
 }
 
 export function coalesceParts(parts: readonly MessagePart[]): MessagePart[] {
@@ -77,7 +79,7 @@ export function messageText(message: UserMessage): string {
 
 export function assetIdsOf(items: readonly QueueItem[]): string[] {
   const ids = items.flatMap((item) =>
-    item.message.parts
+    [...item.selectedContext, ...item.message.parts]
       .filter((part): part is AssetPart => part.type === 'asset')
       .map((part) => part.assetId),
   );
@@ -93,6 +95,11 @@ function normalizeItem(item: LegacyQueueItem): QueueItem {
   const { question: _legacyQuestion, ...rest } = item;
   return {
     ...rest,
+    selectedContext: item.selectedContext?.length
+      ? coalesceParts(item.selectedContext)
+      : item.anchor.exact
+        ? [{ type: 'text', text: item.anchor.exact }]
+        : [],
     message: { role: 'user', parts },
   } as QueueItem;
 }

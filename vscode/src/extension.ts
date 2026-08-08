@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { QueueStore } from './queue';
 import {
   askSelection,
+  askImageSelection,
   askWebviewSelection,
 } from './capture';
 import { Decorations } from './decorations';
@@ -19,6 +20,9 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.commands.registerCommand('dogear.askSelection', () => askSelection(store, panel)),
+    vscode.commands.registerCommand('dogear.askImage', (uri?: vscode.Uri) =>
+      askImageSelection(store, assets, panel, uri),
+    ),
     vscode.commands.registerCommand('dogear.askCodexSelection', () =>
       askWebviewSelection(store, panel, 'codex-chat'),
     ),
