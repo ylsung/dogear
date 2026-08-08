@@ -6,6 +6,12 @@ Some web-based tools and coding agent chatbots already let you select text and a
 
 Dogear solves this problem. You can mark every section you want to revisit, write your questions or edit requests alongside them, and send everything to the model at once. There’s no need to manually copy the selected text, keep track of where it came from, or submit each request separately.
 
+The Chrome extension also supports multimodal questions: use selected text or a
+Dogear screenshot as context, mix text with pasted or dropped reference images,
+or choose **Ask page** when your question is about the page as a whole. Dogear
+keeps the batch editable and uploads its images only when you hand the prompt to
+a chat.
+
 Two extensions live in this repo, sharing the same theme, prompt templates, and
 queue model:
 
@@ -27,7 +33,8 @@ queue model:
    applies suggested hotkeys at install time; check or rebind at
    `chrome://extensions/shortcuts`. The side panel shows your actual binding.
    Press the hotkey without selected text to capture part or all of the visible
-   page as image context. You can also use **Capture screenshot** in the side panel.
+   page as image context. You can also use **Capture screenshot** in the side panel,
+   or choose **Ask page** to start a question without selected context.
 2. Type your query, optionally pasting or dropping reference images directly into
    the composer, then press Enter. Text selections get a numbered highlight and
    the multimodal query lands in the queue (badge on the toolbar icon).
