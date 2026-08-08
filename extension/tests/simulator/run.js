@@ -269,23 +269,55 @@ async function main() {
       document.caretRangeFromPoint = () => range;
       const transfer = new DataTransfer();
       chip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
-      editor.dispatchEvent(new DragEvent('drop', {
+      const dragAtSuffix = {
         bubbles: true,
         cancelable: true,
         clientX: 1,
         clientY: 1,
         dataTransfer: transfer,
-      }));
+      };
+      editor.dispatchEvent(new DragEvent('dragover', dragAtSuffix));
+      const insertionCaretShown = !!editor.querySelector('.dogear-inline-drop-caret');
+      editor.dispatchEvent(new DragEvent('drop', dragAtSuffix));
       document.caretRangeFromPoint = original;
       await new Promise((resolve) => setTimeout(resolve, 300));
-      const queue = await getQueue();
-      const parts = queue[0].message.parts;
+      let queue = await getQueue();
+      let parts = queue[0].message.parts;
+      const movedAfterSuffix = parts.at(-1)?.type === 'asset' &&
+        parts.at(-1)?.assetId === movedAssetId && parts.at(-2)?.text.endsWith('sadsa');
+
+      const movedChip = editor.querySelector('[data-asset-id="' + movedAssetId + '"]');
+      const targetChip = [...editor.querySelectorAll('.dogear-asset-chip')]
+        .find((candidate) => candidate !== movedChip);
+      const targetRect = targetChip.getBoundingClientRect();
+      const secondTransfer = new DataTransfer();
+      movedChip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: secondTransfer }));
+      const dragOnImage = {
+        bubbles: true,
+        cancelable: true,
+        clientX: targetRect.left + 1,
+        clientY: targetRect.top + targetRect.height / 2,
+        dataTransfer: secondTransfer,
+      };
+      targetChip.dispatchEvent(new DragEvent('dragover', dragOnImage));
+      const imageCaret = editor.querySelector('.dogear-inline-drop-caret');
+      const caretBesideTarget = imageCaret?.nextSibling === targetChip || imageCaret?.previousSibling === targetChip;
+      targetChip.dispatchEvent(new DragEvent('drop', dragOnImage));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      queue = await getQueue();
+      parts = queue[0].message.parts;
+      const assetParts = parts.filter((part) => part.type === 'asset');
       return {
         chipIsDraggable: chip.draggable,
-        movedAfterSuffix: parts.at(-1)?.type === 'asset' && parts.at(-1)?.assetId === movedAssetId && parts.at(-2)?.text.endsWith('sadsa'),
+        insertionCaretShown,
+        movedAfterSuffix,
+        caretBesideTarget,
+        dropOnImagePreserved: assetParts.length === 3 &&
+          new Set(assetParts.map((part) => part.assetId)).size === 3 &&
+          editor.querySelectorAll('.dogear-asset-chip .dogear-asset-chip').length === 0,
       };
     })()`);
-    if (!inlineReorder.chipIsDraggable || !inlineReorder.movedAfterSuffix) {
+    if (Object.values(inlineReorder).some((value) => !value)) {
       throw new Error(`Inline asset reorder regression: ${JSON.stringify(inlineReorder)}`);
     }
 
