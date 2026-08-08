@@ -79,19 +79,22 @@ The same select-and-queue workflow, inside your editor, sending batches to
 **Claude Code** or **Codex** instead of a browser chat tab.
 
 1. Select code or text in any editor → press `⌃⌥Q` (Mac) / `Ctrl+Alt+Q`
-   (Windows/Linux), or right-click → **Dogear: Add query for selection**.
-2. Type your query (or leave it empty to fill in later) and press Enter. The
-   selection is highlighted and the query lands in the queue — badge on the
-   Dogear icon in the Activity Bar.
+   (Windows/Linux), or right-click → **Dogear: Add query for selection**. You
+   can also right-click an image file → **Dogear: Add query for image**.
+2. Use the Dogear sidebar composer for multiline text plus pasted, dropped, or
+   selected reference images, then add the mixed-content question to the queue.
+   Text selections are highlighted and image selections retain a preview.
 3. Repeat across as many files as you like. The queue is **per-workspace** and
    survives restarts, so questions about one repo never bleed into another.
-4. Open the Dogear sidebar to edit, reorder (drag cards or whole file groups),
-   or delete queries. Click a file header to jump back to the anchored code.
+4. Open the Dogear sidebar to edit or reorder text and images, drag cards or
+   whole file groups by their handles, or delete queries. Click a source header
+   to jump back to the anchored code or image.
 5. Deliver the batch:
-   - **→ Claude Code / → Codex** places the composed prompt in a matching CLI
-     terminal (reusing one if it's already open) and waits for you to press
-     Enter — it doesn't send on your behalf.
-   - **Copy prompt** puts it on the clipboard for anywhere else.
+   - **→ Codex** attaches queued images and pastes the composed prompt.
+   - **→ Claude Code** pastes the prompt with local paths that Claude can read.
+   - **Copy prompt** puts the prompt and labeled local image paths on the
+     clipboard; **Save images…** exports all images when manual attachment is
+     needed. Dogear never sends on your behalf.
 
 It also supports capturing selections from VS Code's Markdown preview and from
 the Codex/Claude Code chat webviews via right-click, though those captures are
@@ -100,9 +103,9 @@ other extensions).
 
 Install: `cd vscode && npm install && npm run build`, then either press `F5` in
 that folder to run it from source, or package it with `npx @vscode/vsce
-package` and `code --install-extension dogear-vscode-0.1.0.vsix`. Full details,
-including why delivery goes through the CLIs rather than the chat panels
-directly, are in [`vscode/README.md`](vscode/README.md).
+package` and `code --install-extension dogear-vscode-0.2.0.vsix`. Full details,
+including multimodal delivery behavior and fallbacks, are in
+[`vscode/README.md`](vscode/README.md).
 
 ## Current limitations (Phase 0)
 - **Browser-reserved pages**: Chrome forbids all extensions from running on
