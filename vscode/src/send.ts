@@ -30,7 +30,9 @@ const SIDEBAR_TARGETS: Record<ChatTarget, SidebarTarget> = {
 function promptWithLocalPaths(prompt: string, assets: readonly DeliveryAsset[]): string {
   if (!assets.length) return prompt;
   const lines = assets.map((asset) => {
-    const location = asset.uri.scheme === 'file' ? asset.uri.fsPath : asset.uri.toString(true);
+    // For remote workspaces, the coding agent runs on the extension-host side
+    // and needs that host's filesystem path, not a vscode-remote:// UI URI.
+    const location = asset.uri.scheme === 'file' ? asset.uri.fsPath : asset.uri.path;
     return `- ${asset.label}: ${location}`;
   });
   return `${prompt}\n\nLocal image files for the labels above:\n${lines.join('\n')}`;
