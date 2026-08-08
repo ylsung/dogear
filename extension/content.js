@@ -239,7 +239,7 @@
         content: attr(data-placeholder); color: ${T.colors.textFaint}; pointer-events: none;
       }
       .dogear-asset-chip {
-        display: inline-flex; align-items: center; max-width: 180px; gap: 4px;
+        display: inline-flex; align-items: center; gap: 4px;
         margin: 1px 3px; padding: 2px 4px; border: 1px solid ${T.colors.borderStrong};
         border-radius: 5px; background: ${T.colors.groupBg}; vertical-align: middle;
         color: ${T.colors.textMuted}; font-size: 11px;
@@ -247,7 +247,6 @@
       .dogear-asset-chip img {
         width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
       }
-      .dogear-asset-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .dogear-inline-drop-caret {
         display: inline-block; width: 2px; height: 1.35em; margin: 0 1px;
         border-radius: 1px; background: ${T.colors.primary}; vertical-align: text-bottom;
