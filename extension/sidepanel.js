@@ -385,7 +385,7 @@ async function render() {
       },
       onChange: (parts, reason) => {
         draftParts = parts;
-        if (reason === 'asset') saveDraft(parts);
+        if (reason === 'asset') return saveDraft(parts);
       },
       onBlur: () => saveDraft(draftParts),
       onError: note,
