@@ -43,9 +43,19 @@ async function setQueue(queue) {
   render();
 }
 
+function saveQueueWithoutRender(queue) {
+  queueCache = queue;
+  vscodeApi.postMessage({ type: 'save', queue });
+}
+
+function queueStructure(queue) {
+  return queue.map((item) => item.id).join('\n');
+}
+
 window.addEventListener('message', (e) => {
   const msg = e.data;
   if (msg.type === 'state') {
+    const structureChanged = queueStructure(queueCache) !== queueStructure(msg.queue);
     queueCache = msg.queue;
     assetPreviews = msg.assets || {};
     if (msg.promptLang && globalThis.DOGEAR_PROMPTS[msg.promptLang]) {
@@ -53,7 +63,7 @@ window.addEventListener('message', (e) => {
       langSelect.value = promptLang;
     }
     document.getElementById('hotkey').textContent = msg.hotkeyHint;
-    render();
+    if (structureChanged || !listEl.querySelector('.group')) render();
   } else if (msg.type === 'response') {
     const pending = pendingRequests.get(msg.requestId);
     if (!pending) return;
@@ -116,17 +126,22 @@ const captureEditorApi = globalThis.DOGEAR_COMPOSER.create(
     maxFileSize: 15 * 1024 * 1024,
     resolveAssetUrl: async (assetId) => assetPreviews[assetId],
     storeFile: async (file) => {
-      const asset = await requestHost('storeComposerAsset', {
-        base64: await fileBase64(file),
-        mediaType: file.type,
-        displayName: file.name || 'pasted-image.png',
-      });
-      if (asset.previewUrl) assetPreviews[asset.id] = asset.previewUrl;
+      const asset = await storeWebviewFile(file);
       return asset;
     },
     onError: (error) => note(error),
   },
 );
+
+async function storeWebviewFile(file) {
+  const asset = await requestHost('storeAsset', {
+        base64: await fileBase64(file),
+        mediaType: file.type,
+        displayName: file.name || 'pasted-image.png',
+      });
+  if (asset.previewUrl) assetPreviews[asset.id] = asset.previewUrl;
+  return asset;
+}
 
 async function openCaptureComposer(title) {
   captureTitle.textContent = `Question about ${title}`;
@@ -188,6 +203,7 @@ let dragMode = null; // 'card' | 'group' while a drag is in flight
 // draggable onto each other. groupBlocks[i] = item ids of the i-th block.
 let draggedGroupIdx = -1;
 let groupBlocks = [];
+let cardEditors = new Map();
 
 function clearDropIndicators() {
   listEl
@@ -283,6 +299,8 @@ async function render() {
   countEl.textContent = queue.length
     ? `${queue.length} ${queue.length > 1 ? 'queries' : 'query'}`
     : '';
+  cardEditors.forEach((editor) => editor.destroy());
+  cardEditors = new Map();
   listEl.querySelectorAll('.group').forEach((el) => el.remove());
   emptyEl.style.display = queue.length ? 'none' : 'block';
 
@@ -296,8 +314,14 @@ async function render() {
       const groupIdx = groupBlocks.length;
       groupBlocks.push([]);
       group.dataset.groupIdx = String(groupIdx);
-      group.draggable = true;
-      group.addEventListener('dragstart', (e) => {
+      const groupHeader = document.createElement('div');
+      groupHeader.className = 'group-header';
+      const groupHandle = document.createElement('span');
+      groupHandle.className = 'drag-handle group-drag-handle';
+      groupHandle.textContent = '⠿';
+      groupHandle.title = 'Drag this file group';
+      groupHandle.draggable = true;
+      groupHandle.addEventListener('dragstart', (e) => {
         dragMode = 'group';
         draggedGroupIdx = groupIdx;
         e.dataTransfer.effectAllowed = 'move';
@@ -318,7 +342,8 @@ async function render() {
       const label = document.createElement('span');
       label.textContent = item.title;
       src.append(icon, label);
-      group.appendChild(src);
+      groupHeader.append(groupHandle, src);
+      group.appendChild(groupHeader);
       listEl.appendChild(group);
       lastUrl = item.url;
     }
@@ -327,11 +352,10 @@ async function render() {
     const card = document.createElement('div');
     card.className = 'card';
     card.dataset.id = item.id;
-    card.draggable = true;
     if (selectedIds.has(item.id)) card.classList.add('selected');
 
     card.addEventListener('click', async (e) => {
-      if (e.target.closest('textarea, button')) return;
+      if (e.target.closest('.dogear-composer, button, input, .drag-handle')) return;
       if (e.shiftKey && lastAnchorId) {
         await selectRange(lastAnchorId, item.id);
       } else if (e.metaKey || e.ctrlKey) {
@@ -346,17 +370,6 @@ async function render() {
       applySelectionClasses();
     });
 
-    card.addEventListener('dragstart', (e) => {
-      e.stopPropagation(); // don't also start the enclosing group's drag
-      dragMode = 'card';
-      if (!selectedIds.has(item.id)) {
-        selectedIds = new Set([item.id]);
-        applySelectionClasses();
-      }
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', item.id);
-    });
-
     const top = document.createElement('div');
     top.className = 'top';
     const num = document.createElement('span');
@@ -367,15 +380,41 @@ async function render() {
     quote.title = item.anchor.exact;
     top.append(num, quote);
 
-    const q = document.createElement('textarea');
-    q.placeholder = 'Your query about this selection…';
-    q.value = messageText(item);
-    q.addEventListener('change', async () => {
+    const q = document.createElement('div');
+    q.dataset.placeholder = 'Your query about this selection…';
+    const editor = globalThis.DOGEAR_COMPOSER.create(q, {
+      parts: item.message?.parts || [],
+      maxFileSize: 15 * 1024 * 1024,
+      resolveAssetUrl: async (assetId) => assetPreviews[assetId],
+      storeFile: storeWebviewFile,
+      onChange: async (parts) => {
+        const queueNow = await getQueue();
+        const target = queueNow.find((entry) => entry.id === item.id);
+        if (target) {
+          target.message = { role: 'user', parts };
+          saveQueueWithoutRender(queueNow);
+        }
+      },
+      onError: (error) => note(error),
+    });
+    cardEditors.set(item.id, editor);
+
+    const attachInput = document.createElement('input');
+    attachInput.type = 'file';
+    attachInput.accept = 'image/*';
+    attachInput.multiple = true;
+    attachInput.hidden = true;
+    attachInput.addEventListener('change', async () => {
+      await editor.addFiles(attachInput.files);
+      attachInput.value = '';
+    });
+
+    q.addEventListener('blur', async () => {
       const queueNow = await getQueue();
       const target = queueNow.find((x) => x.id === item.id);
       if (target) {
-        replaceMessageText(target, q.value.trim());
-        await setQueue(queueNow);
+        target.message = { role: 'user', parts: editor.getParts() };
+        saveQueueWithoutRender(queueNow);
       }
     });
 
@@ -388,13 +427,30 @@ async function render() {
       b.addEventListener('click', fn);
       return b;
     };
+    const cardHandle = document.createElement('span');
+    cardHandle.className = 'drag-handle card-drag-handle';
+    cardHandle.textContent = '⠿';
+    cardHandle.title = 'Drag this question';
+    cardHandle.draggable = true;
+    cardHandle.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      dragMode = 'card';
+      if (!selectedIds.has(item.id)) {
+        selectedIds = new Set([item.id]);
+        applySelectionClasses();
+      }
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+    });
     tools.append(
+      cardHandle,
+      mk('＋ Image', 'Attach one or more images', () => attachInput.click()),
       mk('↑', 'Move up', () => move(item.id, -1)),
       mk('↓', 'Move down', () => move(item.id, +1)),
       mk('✕', 'Delete', () => remove(item.id)),
     );
 
-    card.append(top, q, tools);
+    card.append(top, q, attachInput, tools);
     group.appendChild(card);
   });
 }

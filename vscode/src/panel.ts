@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { QueueStore, QueueItem, UserMessage, coalesceParts } from './queue';
+import { QueueStore, QueueItem, UserMessage, assetIdsOf, coalesceParts } from './queue';
 import { AssetStore } from './assets';
 import { Decorations } from './decorations';
 import { locateAnchor, rangeFromOffsets } from './anchors';
@@ -119,10 +119,9 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: 'response', requestId, result, error });
   }
 
-  private async storeComposerAsset(msg: any): Promise<void> {
+  private async storeAsset(msg: any): Promise<void> {
     const requestId = String(msg.requestId || '');
     try {
-      if (!this.pendingComposition) throw new Error('The question composer is closed.');
       if (typeof msg.base64 !== 'string' || !String(msg.mediaType).startsWith('image/')) {
         throw new Error('Dogear only accepts image attachments here.');
       }
@@ -137,7 +136,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
         mediaType: msg.mediaType,
         displayName: String(msg.displayName || 'image'),
       });
-      this.pendingComposition.assetIds.add(asset.id);
+      this.pendingComposition?.assetIds.add(asset.id);
       const uri = this.assets.uri(asset);
       this.respond(requestId, {
         id: asset.id,
@@ -155,8 +154,8 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       case 'ready':
         this.pushState();
         break;
-      case 'storeComposerAsset':
-        await this.storeComposerAsset(msg);
+      case 'storeAsset':
+        await this.storeAsset(msg);
         break;
       case 'composeSubmit': {
         const pending = this.pendingComposition;
@@ -178,6 +177,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
         break;
       case 'save':
         await this.store.set(msg.queue);
+        await this.assets.removeUnreferenced(assetIdsOf(this.store.get()));
         break;
       case 'setLang':
         await this.context.globalState.update('promptLang', msg.lang);
@@ -197,7 +197,10 @@ export class DogearPanel implements vscode.WebviewViewProvider {
           { modal: true },
           'Remove all',
         );
-        if (ok === 'Remove all') await this.store.set([]);
+        if (ok === 'Remove all') {
+          await this.store.set([]);
+          await this.assets.removeUnreferenced([]);
+        }
         break;
       }
       case 'openSource':
