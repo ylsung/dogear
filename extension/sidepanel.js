@@ -77,8 +77,8 @@ async function setQueueQuietly(queue) {
   }
 }
 
-async function collectGarbage(queue) {
-  const referenced = queue.flatMap(M.assetIdsOf);
+async function collectGarbage(queue, retainedAssetIds = []) {
+  const referenced = [...queue.flatMap(M.assetIdsOf), ...retainedAssetIds];
   await ASSETS.removeUnreferenced(referenced);
   const keep = new Set(referenced);
   const { [ATTACHMENT_STATUS_KEY]: current = {} } =
@@ -364,13 +364,14 @@ async function render() {
     const q = document.createElement('div');
     q.dataset.placeholder = 'Type a question, paste an image, or drop one here…';
     let draftParts = item.message.parts;
+    const undoRetainedAssetIds = new Set();
     const saveDraft = async (parts) => {
       const queueNow = await getQueue();
       const target = queueNow.find((x) => x.id === item.id);
       if (target) {
         target.message = { role: 'user', parts: M.coalesceParts(parts) };
         await setQueueQuietly(queueNow);
-        await collectGarbage(queueNow);
+        await collectGarbage(queueNow, undoRetainedAssetIds);
       }
     };
     const composer = COMPOSER.create(q, {
@@ -389,10 +390,25 @@ async function render() {
         return url;
       },
       onChange: (parts, reason) => {
+        const previousAssetIds = new Set(
+          draftParts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        const nextAssetIds = new Set(
+          parts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        for (const id of previousAssetIds) {
+          if (!nextAssetIds.has(id)) undoRetainedAssetIds.add(id);
+        }
+        for (const id of nextAssetIds) undoRetainedAssetIds.delete(id);
         draftParts = parts;
-        if (reason === 'asset') return saveDraft(parts);
+        if (reason === 'asset' || reason === 'history') return saveDraft(parts);
       },
       onBlur: () => saveDraft(draftParts),
+      onDestroy: () => {
+        if (!undoRetainedAssetIds.size) return;
+        undoRetainedAssetIds.clear();
+        getQueue().then(collectGarbage);
+      },
       onError: note,
     });
     liveComposers.push(composer);
