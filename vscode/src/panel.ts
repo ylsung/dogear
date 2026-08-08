@@ -5,7 +5,7 @@ import { QueueStore, QueueItem, UserMessage, assetIdsOf, coalesceParts } from '.
 import { AssetStore } from './assets';
 import { Decorations } from './decorations';
 import { locateAnchor, rangeFromOffsets } from './anchors';
-import { copyPrompt, sendToSidebar } from './send';
+import { copyPrompt, DeliveryAsset, sendToSidebar } from './send';
 
 export class DogearPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dogear.queue';
@@ -119,6 +119,58 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: 'response', requestId, result, error });
   }
 
+  private deliveryAssets(ids: unknown): DeliveryAsset[] {
+    if (!Array.isArray(ids)) return [];
+    const unique = [...new Set(ids.filter((id): id is string => typeof id === 'string'))];
+    return unique.flatMap((id, index) => {
+      const uri = this.assets.uri(id);
+      return uri ? [{ id, label: `Image I${index + 1}`, uri }] : [];
+    });
+  }
+
+  private async unusedDestination(folder: vscode.Uri, name: string): Promise<vscode.Uri> {
+    const extension = path.extname(name);
+    const stem = path.basename(name, extension);
+    for (let copy = 0; ; copy += 1) {
+      const candidate = vscode.Uri.joinPath(
+        folder,
+        copy ? `${stem}-${copy + 1}${extension}` : name,
+      );
+      try {
+        await vscode.workspace.fs.stat(candidate);
+      } catch {
+        return candidate;
+      }
+    }
+  }
+
+  private async saveAssets(ids: unknown): Promise<void> {
+    const assets = this.deliveryAssets(ids);
+    if (!assets.length) return;
+    const [folder] = await vscode.window.showOpenDialog({
+      title: 'Save Dogear images',
+      openLabel: `Save ${assets.length} ${assets.length === 1 ? 'image' : 'images'} here`,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+    }) || [];
+    if (!folder) return;
+
+    let saved = 0;
+    for (const [index, delivery] of assets.entries()) {
+      const record = this.assets.get(delivery.id);
+      const bytes = record ? await this.assets.read(record.id) : undefined;
+      if (!record || !bytes) continue;
+      const clean = record.displayName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-') || 'image';
+      const destination = await this.unusedDestination(folder, `I${index + 1}-${clean}`);
+      await vscode.workspace.fs.writeFile(destination, bytes);
+      saved += 1;
+    }
+    vscode.window.showInformationMessage(
+      `Dogear: saved ${saved} ${saved === 1 ? 'image' : 'images'}.`,
+    );
+  }
+
   private async storeAsset(msg: any): Promise<void> {
     const requestId = String(msg.requestId || '');
     try {
@@ -183,11 +235,16 @@ export class DogearPanel implements vscode.WebviewViewProvider {
         await this.context.globalState.update('promptLang', msg.lang);
         break;
       case 'copy':
-        await copyPrompt(msg.prompt);
-        this.note('Prompt copied — paste it into any chat.');
+        await copyPrompt(msg.prompt, this.deliveryAssets(msg.assetIds));
+        this.note(msg.assetIds?.length
+          ? 'Prompt copied with local image paths — attach the files if the destination cannot read them.'
+          : 'Prompt copied — paste it into any chat.');
         break;
       case 'send':
-        await sendToSidebar(msg.target, msg.prompt);
+        await sendToSidebar(msg.target, msg.prompt, this.deliveryAssets(msg.assetIds));
+        break;
+      case 'saveAssets':
+        await this.saveAssets(msg.assetIds);
         break;
       case 'clear': {
         const n = this.store.get().length;
@@ -315,6 +372,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       <button id="copy" title="Copy the composed prompt to the clipboard">Copy prompt</button>
       <button id="to-claude" title="Paste the composed prompt into the Claude Code sidebar without sending">→ Claude Code</button>
       <button id="to-codex" title="Paste the composed prompt into the Codex sidebar without sending">→ Codex</button>
+      <button id="save-images" title="Save every queued image to a folder" hidden>Save images…</button>
       <button id="clear" class="danger" title="Remove all queries">Clear</button>
     </div>
     <div class="lang-row">

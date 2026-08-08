@@ -2,6 +2,12 @@ import * as vscode from 'vscode';
 
 type ChatTarget = 'claude' | 'codex';
 
+export interface DeliveryAsset {
+  id: string;
+  label: string;
+  uri: vscode.Uri;
+}
+
 interface SidebarTarget {
   extensionId: string;
   label: string;
@@ -21,8 +27,20 @@ const SIDEBAR_TARGETS: Record<ChatTarget, SidebarTarget> = {
   },
 };
 
-export async function copyPrompt(prompt: string): Promise<void> {
-  await vscode.env.clipboard.writeText(prompt);
+function promptWithLocalPaths(prompt: string, assets: readonly DeliveryAsset[]): string {
+  if (!assets.length) return prompt;
+  const lines = assets.map((asset) => {
+    const location = asset.uri.scheme === 'file' ? asset.uri.fsPath : asset.uri.toString(true);
+    return `- ${asset.label}: ${location}`;
+  });
+  return `${prompt}\n\nLocal image files for the labels above:\n${lines.join('\n')}`;
+}
+
+export async function copyPrompt(
+  prompt: string,
+  assets: readonly DeliveryAsset[] = [],
+): Promise<void> {
+  await vscode.env.clipboard.writeText(promptWithLocalPaths(prompt, assets));
 }
 
 /**
@@ -34,18 +52,39 @@ export async function copyPrompt(prompt: string): Promise<void> {
  * command is the supported bridge to a focused webview; it inserts the text
  * without synthesizing Enter, so submitting remains an explicit user action.
  */
-export async function sendToSidebar(target: string, prompt: string): Promise<void> {
+export async function sendToSidebar(
+  target: string,
+  prompt: string,
+  assets: readonly DeliveryAsset[] = [],
+): Promise<void> {
   if (target !== 'claude' && target !== 'codex') return;
   const sidebar = SIDEBAR_TARGETS[target];
-
-  await vscode.env.clipboard.writeText(prompt);
+  const fallbackPrompt = promptWithLocalPaths(prompt, assets);
 
   if (!vscode.extensions.getExtension(sidebar.extensionId)) {
+    await vscode.env.clipboard.writeText(fallbackPrompt);
     vscode.window.showWarningMessage(
       `Dogear: ${sidebar.label} is not installed. The prompt was copied to the clipboard.`,
     );
     return;
   }
+
+  let attached = 0;
+  if (target === 'codex') {
+    for (const asset of assets) {
+      try {
+        await vscode.commands.executeCommand('chatgpt.addFileToThread', asset.uri);
+        attached += 1;
+      } catch {
+        // Keep going; the local-path prompt below is the supported fallback.
+      }
+    }
+  }
+
+  const deliveredPrompt = target === 'codex' && attached === assets.length
+    ? prompt
+    : fallbackPrompt;
+  await vscode.env.clipboard.writeText(deliveredPrompt);
 
   try {
     await vscode.commands.executeCommand(sidebar.openCommand);
@@ -72,6 +111,8 @@ export async function sendToSidebar(target: string, prompt: string): Promise<voi
 
   const pasteKey = process.platform === 'darwin' ? '⌘V' : 'Ctrl+V';
   vscode.window.showInformationMessage(
-    `Dogear: prompt pasted into ${sidebar.label}. Review it, then send when ready. If the composer stayed empty, press ${pasteKey}.`,
+    `Dogear: prompt${attached ? ` and ${attached} ${attached === 1 ? 'image' : 'images'}` : ''} ` +
+      `pasted into ${sidebar.label}. Review it, then send when ready. ` +
+      `If the composer stayed empty, press ${pasteKey}.`,
   );
 }
