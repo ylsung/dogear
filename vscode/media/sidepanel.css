@@ -307,12 +307,6 @@ footer {
 }
 .handoff-all:hover { background: var(--highlight); }
 .handoff-all:disabled { cursor: wait; opacity: .7; }
-.handoff-all.attached,
-.handoff-asset.attached {
-  border-color: var(--successBorder);
-  background: var(--successBg);
-}
-.handoff-all.attached { color: var(--success); cursor: default; opacity: 1; }
 .handoff-asset {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);

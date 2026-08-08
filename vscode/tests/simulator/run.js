@@ -27,8 +27,8 @@ const fixture = `<!doctype html>
     <div id="capture-editor" data-placeholder="Type a question…"></div>
     <input id="capture-images" type="file" accept="image/*" multiple hidden />
     <div class="capture-actions">
-      <button id="capture-add-image">＋ Image</button>
       <span class="capture-action-spacer"></span>
+      <button id="capture-add-image">＋ Image</button>
       <button id="capture-cancel">Cancel</button>
       <button id="capture-submit">Add to queue</button>
     </div>
@@ -212,10 +212,13 @@ async function main() {
     await page.locator('#manual-handoff').waitFor();
     assert.equal(await page.locator('.handoff-asset').count(), 3);
     await page.locator('.handoff-all').click();
-    await page.locator('.handoff-all.attached').waitFor();
+    await page.locator('.handoff-all:not(:disabled)').waitFor();
     const attached = await page.evaluate(() =>
       window.__hostMessages.findLast((message) => message.type === 'attachAssets'));
     assert.deepEqual(attached.assetIds, ['asset-1', 'asset-2', 'asset-3']);
+    await page.locator('.handoff-all').click();
+    await page.waitForFunction(() => window.__hostMessages.filter(
+      (message) => message.type === 'attachAssets').length === 2);
 
     await page.locator('.card[data-id="q2"] .dogear-remove-asset').last().click();
     await page.waitForFunction(() => window.__hostMessages.some((message) =>

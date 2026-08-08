@@ -36,7 +36,6 @@ let assetPreviews = {};
 let requestSequence = 0;
 const pendingRequests = new Map();
 let manualHandoffAssets = [];
-let manuallyAttachedIds = new Set();
 
 async function getQueue() {
   return queueCache;
@@ -541,42 +540,35 @@ function renderManualHandoff() {
   if (!assets.length) return;
 
   handoffSummaryEl.textContent = `Manual handoff · ${assets.length} ${assets.length === 1 ? 'image' : 'images'}`;
-  const remaining = assets.filter((asset) => !manuallyAttachedIds.has(asset.id));
   const attachAll = document.createElement('button');
   attachAll.className = 'handoff-all';
-  if (!remaining.length) {
-    attachAll.textContent = `✓ All ${assets.length} attached to Codex`;
-    attachAll.classList.add('attached');
+  attachAll.textContent = 'Attach all images to this chat';
+  attachAll.addEventListener('click', async () => {
     attachAll.disabled = true;
-  } else {
-    attachAll.textContent = `Attach all ${remaining.length} ${remaining.length === 1 ? 'image' : 'images'} to Codex`;
-    attachAll.addEventListener('click', async () => {
-      attachAll.disabled = true;
-      try {
-        const result = await requestHost('attachAssets', {
-          assetIds: remaining.map((asset) => asset.id),
-        });
-        if (result.unavailable) {
-          note('Codex is not installed. Use the local image paths included in the copied prompt.');
-        } else {
-          (result.attachedIds || []).forEach((id) => manuallyAttachedIds.add(id));
-          const failed = remaining.length - (result.attachedIds || []).length;
-          note(failed
-            ? `${failed} ${failed === 1 ? 'image' : 'images'} could not be attached. Retry the remaining images.`
-            : 'All images attached to Codex. Paste the copied prompt when ready.');
-        }
-      } catch (error) {
-        note(error.message || 'Could not attach images to Codex.');
+    try {
+      const result = await requestHost('attachAssets', {
+        assetIds: assets.map((asset) => asset.id),
+      });
+      if (result.unavailable) {
+        note('This chat does not expose an image attachment command. Use the local paths in the copied prompt.');
+      } else {
+        const attached = (result.attachedIds || []).length;
+        const failed = assets.length - attached;
+        note(failed
+          ? `${attached} attached; ${failed} ${failed === 1 ? 'image' : 'images'} could not be attached.`
+          : `${attached} ${attached === 1 ? 'image' : 'images'} attached. You can attach them again after switching chats.`);
       }
-      renderManualHandoff();
-    });
-  }
+    } catch (error) {
+      note(error.message || 'Could not attach images to this chat.');
+    } finally {
+      attachAll.disabled = false;
+    }
+  });
   handoffAssetsEl.appendChild(attachAll);
 
   assets.forEach((asset) => {
     const row = document.createElement('div');
     row.className = 'handoff-asset';
-    if (manuallyAttachedIds.has(asset.id)) row.classList.add('attached');
     const img = document.createElement('img');
     img.src = assetPreviews[asset.id] || '';
     img.alt = '';
@@ -590,7 +582,6 @@ function renderManualHandoff() {
 
 function showManualHandoff(assets) {
   manualHandoffAssets = assets;
-  manuallyAttachedIds = new Set();
   renderManualHandoff();
   handoffEl.open = true;
 }

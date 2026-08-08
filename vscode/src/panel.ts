@@ -213,7 +213,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
           this.respond(
             requestId,
             undefined,
-            error instanceof Error ? error.message : 'Could not attach images to Codex.',
+            error instanceof Error ? error.message : 'Could not attach images to this chat.',
           );
         }
         break;
@@ -330,8 +330,8 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     <div id="capture-editor" data-placeholder="Type a question, paste an image, or drop one here…"></div>
     <input id="capture-images" type="file" accept="image/*" multiple hidden />
     <div class="capture-actions">
-      <button id="capture-add-image" title="Attach one or more images">＋ Image</button>
       <span class="capture-action-spacer"></span>
+      <button id="capture-add-image" title="Attach one or more images">＋ Image</button>
       <button id="capture-cancel">Cancel</button>
       <button id="capture-submit" class="primary">Add to queue</button>
     </div>
@@ -350,7 +350,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   <footer>
     <details id="manual-handoff" hidden>
       <summary id="manual-summary">Manual handoff</summary>
-      <p>Attach every labeled image to Codex in one step. For Claude Code or another chat, the copied prompt includes local image paths as the fallback.</p>
+      <p>Open the destination chat, then attach every labeled image at once.</p>
       <div id="manual-assets"></div>
     </details>
     <div class="actions">
