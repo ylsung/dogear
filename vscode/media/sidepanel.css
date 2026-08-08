@@ -80,8 +80,10 @@ header {
   background: var(--dark);
   color: var(--textOnDark);
 }
+.capture-action-spacer { flex: 1; }
 .capture-hint {
-  flex: 1;
+  margin-top: 5px;
+  text-align: right;
   color: var(--textFaint);
   font-size: 10px;
 }

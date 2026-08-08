@@ -28,10 +28,11 @@ const fixture = `<!doctype html>
     <input id="capture-images" type="file" accept="image/*" multiple hidden />
     <div class="capture-actions">
       <button id="capture-add-image">＋ Image</button>
-      <span class="capture-hint"></span>
+      <span class="capture-action-spacer"></span>
       <button id="capture-cancel">Cancel</button>
       <button id="capture-submit">Add to queue</button>
     </div>
+    <div class="capture-hint"></div>
   </section>
   <main id="list">
     <p class="empty" id="empty"><kbd id="hotkey">…</kbd></p>
@@ -41,7 +42,6 @@ const fixture = `<!doctype html>
       <button id="copy">Copy prompt</button>
       <button id="to-claude">→ Claude Code</button>
       <button id="to-codex">→ Codex</button>
-      <button id="save-images" hidden>Save images…</button>
       <button id="clear">Clear</button>
     </div>
     <select id="lang"></select>

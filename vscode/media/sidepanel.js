@@ -71,7 +71,6 @@ window.addEventListener('message', (e) => {
       langSelect.value = promptLang;
     }
     document.getElementById('hotkey').textContent = msg.hotkeyHint;
-    document.getElementById('save-images').hidden = !buildAssetPlan(queueCache).length;
     if (structureChanged || !listEl.querySelector('.group')) render();
   } else if (msg.type === 'response') {
     const pending = pendingRequests.get(msg.requestId);
@@ -625,12 +624,6 @@ document.getElementById('to-codex').addEventListener('click', async () => {
     prompt: prompt.text,
     assetIds: prompt.assets.map((asset) => asset.id),
   });
-});
-
-document.getElementById('save-images').addEventListener('click', async () => {
-  const assets = buildAssetPlan(await getQueue());
-  if (!assets.length) return;
-  vscodeApi.postMessage({ type: 'saveAssets', assetIds: assets.map((asset) => asset.id) });
 });
 
 document.getElementById('clear').addEventListener('click', () => {
