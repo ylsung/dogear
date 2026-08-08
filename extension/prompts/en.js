@@ -29,6 +29,8 @@ globalThis.DOGEAR_PROMPTS['en'] = {
   multimodalSelection: (qNum, where, content) =>
     `[Q${qNum}]${where}\nSelected context: ${content}`,
 
+  pageQuestion: (qNum) => `[Q${qNum}]\nContext: the whole source page`,
+
   // Optional line showing text around the selection.
   context: (prefix, suffix) => `Surrounding text: "…${prefix}⟨selected text⟩${suffix}…"`,
 

@@ -337,7 +337,7 @@ async function render() {
       quote.textContent = truncate(contextText, 220);
       quote.title = contextText;
       top.append(num, quote);
-    } else {
+    } else if (locator.type !== 'unanchored') {
       const images = document.createElement('div');
       images.className = 'context-images';
       top.append(num, images);
@@ -354,6 +354,11 @@ async function render() {
           images.appendChild(img);
         });
       }
+    } else {
+      const pageContext = document.createElement('span');
+      pageContext.className = 'page-context';
+      pageContext.textContent = 'Whole page';
+      top.append(num, pageContext);
     }
 
     const q = document.createElement('div');
@@ -564,9 +569,11 @@ function composePrompt(queue, assets) {
     const contextParts = item.selectedContext.flatMap((context) => context.parts);
     const contextText = renderParts(contextParts, labels);
     const hasContextAsset = contextParts.some((part) => part.type === 'asset');
-    lines.push('', hasContextAsset
-      ? P.multimodalSelection(idx + 1, where, contextText)
-      : P.excerpt(idx + 1, where, contextText));
+    lines.push('', locator.type === 'unanchored'
+      ? P.pageQuestion(idx + 1)
+      : hasContextAsset
+        ? P.multimodalSelection(idx + 1, where, contextText)
+        : P.excerpt(idx + 1, where, contextText));
     if (locator.prefix || locator.suffix) {
       lines.push(P.context(locator.prefix, locator.suffix));
     }
@@ -708,6 +715,18 @@ document.getElementById('capture-region').addEventListener('click', async () => 
     await chrome.tabs.update(tab.id, { active: true });
   } catch (_) {
     note('Dogear cannot capture this browser page.');
+  }
+});
+
+document.getElementById('ask-page').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-open-page-ask' }, { frameId: 0 });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tab.id, { active: true });
+  } catch (_) {
+    note('Dogear cannot ask about this browser page.');
   }
 });
 

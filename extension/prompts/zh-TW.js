@@ -20,6 +20,8 @@ globalThis.DOGEAR_PROMPTS['zh-TW'] = {
   multimodalSelection: (qNum, where, content) =>
     `[Q${qNum}]${where}\n所選內容：${content}`,
 
+  pageQuestion: (qNum) => `[Q${qNum}]\n範圍：整個來源頁面`,
+
   context: (prefix, suffix) => `前後文：「…${prefix}⟨片段⟩${suffix}…」`,
 
   question: (text) => `請求：${text}`,
