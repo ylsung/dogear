@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Dogear",
   "version": "0.1.0",
-  "description": "Select text anywhere, attach a query to each selection, then batch-submit them all to ChatGPT or Claude as one prompt.",
+  "description": "Collect text and screenshot selections with multimodal questions, then hand them to any AI chat.",
   "permissions": ["storage", "contextMenus", "sidePanel", "scripting", "tabs", "favicon"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js" },
