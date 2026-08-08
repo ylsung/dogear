@@ -62,6 +62,10 @@ function queueFingerprint(queue) {
   return JSON.stringify(queue || []);
 }
 
+function queueOrderFingerprint(queue) {
+  return JSON.stringify((queue || []).map((item) => item.id));
+}
+
 function consumeQuietQueueWrite(fingerprint) {
   const count = pendingQuietQueueWrites.get(fingerprint) || 0;
   if (!count) return false;
@@ -374,15 +378,20 @@ async function render() {
     const q = document.createElement('div');
     q.dataset.placeholder = 'Type a question, paste an image, or drop one here…';
     let draftParts = item.message.parts;
+    let saveDraftChain = Promise.resolve();
     const undoRetainedAssetIds = new Set();
-    const saveDraft = async (parts) => {
-      const queueNow = await getQueue();
-      const target = queueNow.find((x) => x.id === item.id);
-      if (target) {
-        target.message = { role: 'user', parts: M.coalesceParts(parts) };
-        await setQueueQuietly(queueNow);
-        await collectGarbage(queueNow, undoRetainedAssetIds);
-      }
+    const saveDraft = (parts) => {
+      const snapshot = M.coalesceParts(parts);
+      saveDraftChain = saveDraftChain.catch(() => {}).then(async () => {
+        const queueNow = await getQueue();
+        const target = queueNow.find((x) => x.id === item.id);
+        if (target) {
+          target.message = { role: 'user', parts: snapshot };
+          await setQueueQuietly(queueNow);
+          await collectGarbage(queueNow, undoRetainedAssetIds);
+        }
+      });
+      return saveDraftChain;
     };
     const composer = COMPOSER.create(q, {
       parts: item.message.parts,
@@ -411,9 +420,13 @@ async function render() {
         }
         for (const id of nextAssetIds) undoRetainedAssetIds.delete(id);
         draftParts = parts;
-        if (reason === 'asset' || reason === 'history') return saveDraft(parts);
+        if (reason === 'asset') return saveDraft(parts);
       },
-      onBlur: () => saveDraft(draftParts),
+      onBlur: (parts, event) => {
+        draftParts = parts;
+        if (event.relatedTarget instanceof Node && card.contains(event.relatedTarget)) return;
+        return saveDraft(parts);
+      },
       onDestroy: () => {
         if (!undoRetainedAssetIds.size) return;
         undoRetainedAssetIds.clear();
@@ -1212,7 +1225,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     return;
   }
   if (area === 'local' && changes.queue) {
-    if (consumeQuietQueueWrite(queueFingerprint(changes.queue.newValue))) {
+    const sameQuestionOrder =
+      queueOrderFingerprint(changes.queue.oldValue) === queueOrderFingerprint(changes.queue.newValue);
+    if (sameQuestionOrder) {
+      consumeQuietQueueWrite(queueFingerprint(changes.queue.newValue));
       getQueue().then(renderManualHandoff);
       return;
     }

@@ -275,8 +275,8 @@
       pendingInput = null;
       options.onChange?.(after, 'input');
     });
-    root.addEventListener('blur', () => {
-      fileMutation.then(() => options.onBlur?.(getParts()));
+    root.addEventListener('blur', (event) => {
+      fileMutation.then(() => options.onBlur?.(getParts(), event));
     });
     root.addEventListener('beforeinput', (event) => {
       if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
