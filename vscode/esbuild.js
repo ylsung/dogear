@@ -15,6 +15,8 @@ function copy(src, dest) {
 
 function copyShared() {
   copy(path.join(CHROME, 'theme.js'), path.join(MEDIA, 'theme.js'));
+  copy(path.join(CHROME, 'model.js'), path.join(MEDIA, 'model.js'));
+  copy(path.join(CHROME, 'composer.js'), path.join(MEDIA, 'composer.js'));
   for (const f of fs.readdirSync(path.join(CHROME, 'prompts'))) {
     copy(path.join(CHROME, 'prompts', f), path.join(MEDIA, 'prompts', f));
   }

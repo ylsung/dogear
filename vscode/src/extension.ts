@@ -6,27 +6,27 @@ import {
 } from './capture';
 import { Decorations } from './decorations';
 import { DogearPanel } from './panel';
+import { AssetStore } from './assets';
 
 export function activate(context: vscode.ExtensionContext): void {
   const store = new QueueStore(context.workspaceState);
+  const assets = new AssetStore(context);
   const decorations = new Decorations(store, context);
-  const panel = new DogearPanel(context, store, decorations);
+  const panel = new DogearPanel(context, store, assets, decorations);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(DogearPanel.viewId, panel, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    // No auto-focus of the sidebar after adding: capture should keep you in
-    // the editor (the view badge shows the growing count instead).
-    vscode.commands.registerCommand('dogear.askSelection', () => askSelection(store)),
+    vscode.commands.registerCommand('dogear.askSelection', () => askSelection(store, panel)),
     vscode.commands.registerCommand('dogear.askCodexSelection', () =>
-      askWebviewSelection(store, 'codex-chat'),
+      askWebviewSelection(store, panel, 'codex-chat'),
     ),
     vscode.commands.registerCommand('dogear.askClaudeSelection', () =>
-      askWebviewSelection(store, 'claude-chat'),
+      askWebviewSelection(store, panel, 'claude-chat'),
     ),
     vscode.commands.registerCommand('dogear.askMarkdownPreviewSelection', () =>
-      askWebviewSelection(store, 'markdown-preview'),
+      askWebviewSelection(store, panel, 'markdown-preview'),
     ),
   );
 }

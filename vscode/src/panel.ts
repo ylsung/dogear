@@ -1,18 +1,25 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { QueueStore, QueueItem } from './queue';
+import { QueueStore, QueueItem, UserMessage, coalesceParts } from './queue';
+import { AssetStore } from './assets';
 import { Decorations } from './decorations';
 import { locateAnchor, rangeFromOffsets } from './anchors';
 import { copyPrompt, sendToSidebar } from './send';
 
 export class DogearPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dogear.queue';
+  private static readonly maxAssetBytes = 15 * 1024 * 1024;
   private view: vscode.WebviewView | undefined;
+  private viewWaiters: Array<() => void> = [];
+  private pendingComposition:
+    | { resolve: (message: UserMessage | undefined) => void; assetIds: Set<string> }
+    | undefined;
 
   constructor(
     private context: vscode.ExtensionContext,
     private store: QueueStore,
+    private assets: AssetStore,
     private decorations: Decorations,
   ) {
     context.subscriptions.push(store.onDidChange(() => this.pushState()));
@@ -22,11 +29,60 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     this.view = view;
     view.webview.options = {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'media'))],
+      localResourceRoots: [
+        vscode.Uri.file(path.join(this.context.extensionPath, 'media')),
+        this.assets.root,
+      ],
     };
     view.webview.html = this.html(view.webview);
     view.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
+    view.onDidDispose(() => {
+      if (this.view === view) this.view = undefined;
+      void this.cancelComposition();
+    });
+    this.viewWaiters.splice(0).forEach((resolve) => resolve());
     this.pushState();
+  }
+
+  async compose(title: string): Promise<UserMessage | undefined> {
+    if (this.pendingComposition) await this.cancelComposition();
+    try {
+      await this.reveal();
+    } catch {
+      vscode.window.showWarningMessage('Dogear: could not open the question composer.');
+      return undefined;
+    }
+    return new Promise((resolve) => {
+      this.pendingComposition = { resolve, assetIds: new Set() };
+      this.view?.webview.postMessage({ type: 'compose', title });
+    });
+  }
+
+  private async reveal(): Promise<void> {
+    if (!this.view) {
+      await vscode.commands.executeCommand(`${DogearPanel.viewId}.focus`);
+    }
+    if (this.view) return;
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Dogear sidebar did not open.')), 3000);
+      this.viewWaiters.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
+  private async cancelComposition(): Promise<void> {
+    const pending = this.pendingComposition;
+    if (!pending) return;
+    this.pendingComposition = undefined;
+    pending.resolve(undefined);
+    const referenced = this.store.get().flatMap((item) =>
+      item.message.parts
+        .filter((part) => part.type === 'asset')
+        .map((part) => part.assetId),
+    );
+    await this.assets.removeUnreferenced(referenced);
   }
 
   private note(msg: string): void {
@@ -42,9 +98,55 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       this.view.webview.postMessage({
         type: 'state',
         queue,
+        assets: this.assetPreviews(),
         promptLang: this.context.globalState.get<string>('promptLang'),
         hotkeyHint: process.platform === 'darwin' ? '⌃⌥Q' : 'Ctrl+Alt+Q',
       });
+    }
+  }
+
+  private assetPreviews(): Record<string, string> {
+    if (!this.view) return {};
+    return Object.fromEntries(
+      this.assets.all().flatMap((asset) => {
+        const uri = this.assets.uri(asset);
+        return uri ? [[asset.id, this.view!.webview.asWebviewUri(uri).toString()]] : [];
+      }),
+    );
+  }
+
+  private respond(requestId: string, result?: unknown, error?: string): void {
+    this.view?.webview.postMessage({ type: 'response', requestId, result, error });
+  }
+
+  private async storeComposerAsset(msg: any): Promise<void> {
+    const requestId = String(msg.requestId || '');
+    try {
+      if (!this.pendingComposition) throw new Error('The question composer is closed.');
+      if (typeof msg.base64 !== 'string' || !String(msg.mediaType).startsWith('image/')) {
+        throw new Error('Dogear only accepts image attachments here.');
+      }
+      if (msg.base64.length > Math.ceil(DogearPanel.maxAssetBytes * 4 / 3) + 8) {
+        throw new Error('Image is larger than 15 MB.');
+      }
+      const bytes = Buffer.from(msg.base64, 'base64');
+      if (bytes.byteLength > DogearPanel.maxAssetBytes) {
+        throw new Error('Image is larger than 15 MB.');
+      }
+      const asset = await this.assets.put(bytes, {
+        mediaType: msg.mediaType,
+        displayName: String(msg.displayName || 'image'),
+      });
+      this.pendingComposition.assetIds.add(asset.id);
+      const uri = this.assets.uri(asset);
+      this.respond(requestId, {
+        id: asset.id,
+        mimeType: asset.mediaType,
+        displayName: asset.displayName,
+        previewUrl: uri ? this.view?.webview.asWebviewUri(uri).toString() : undefined,
+      });
+    } catch (error) {
+      this.respond(requestId, undefined, error instanceof Error ? error.message : 'Could not store image.');
     }
   }
 
@@ -52,6 +154,27 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     switch (msg.type) {
       case 'ready':
         this.pushState();
+        break;
+      case 'storeComposerAsset':
+        await this.storeComposerAsset(msg);
+        break;
+      case 'composeSubmit': {
+        const pending = this.pendingComposition;
+        if (!pending) break;
+        const parts = coalesceParts(Array.isArray(msg.parts) ? msg.parts : []);
+        const missing = parts.find(
+          (part) => part.type === 'asset' && !this.assets.get(part.assetId),
+        );
+        if (missing) {
+          this.note('One attached image is no longer available. Remove it and try again.');
+          break;
+        }
+        this.pendingComposition = undefined;
+        pending.resolve({ role: 'user', parts });
+        break;
+      }
+      case 'composeCancel':
+        await this.cancelComposition();
         break;
       case 'save':
         await this.store.set(msg.queue);
@@ -125,7 +248,14 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       .readdirSync(promptsDir)
       .filter((f) => f.endsWith('.js') && f !== 'index.js')
       .sort();
-    const scripts = ['theme.js', 'prompts/index.js', ...packs.map((f) => `prompts/${f}`), 'sidepanel.js']
+    const scripts = [
+      'theme.js',
+      'model.js',
+      'composer.js',
+      'prompts/index.js',
+      ...packs.map((f) => `prompts/${f}`),
+      'sidepanel.js',
+    ]
       .map((f) => `<script src="${media(...f.split('/'))}"></script>`)
       .join('\n  ');
 
@@ -155,6 +285,18 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     <h1 id="brand">Dogear</h1>
     <span id="count"></span>
   </header>
+
+  <section id="capture-composer" hidden>
+    <div class="capture-title" id="capture-title"></div>
+    <div id="capture-editor" data-placeholder="Type a question, paste an image, or drop one here…"></div>
+    <input id="capture-images" type="file" accept="image/*" multiple hidden />
+    <div class="capture-actions">
+      <button id="capture-add-image" title="Attach one or more images">＋ Image</button>
+      <span class="capture-hint"><kbd>⌘/Ctrl+Enter</kbd> add · <kbd>Esc</kbd> cancel</span>
+      <button id="capture-cancel">Cancel</button>
+      <button id="capture-submit" class="primary">Add to queue</button>
+    </div>
+  </section>
 
   <main id="list">
     <p class="empty" id="empty">
