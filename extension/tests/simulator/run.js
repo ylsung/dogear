@@ -58,6 +58,9 @@ async function main() {
   const contentPath = path.join(extensionCopy, 'content.js');
   const content = fs.readFileSync(contentPath, 'utf8');
   fs.writeFileSync(contentPath, content.replace(
+    "host.attachShadow({ mode: 'closed' })",
+    "host.attachShadow({ mode: 'open' })",
+  ).replace(
     '\n  attachHost();\n  refreshHighlights();',
     `
   if (location.hostname === '127.0.0.1') {
@@ -205,6 +208,42 @@ async function main() {
       () => sideValue(sideClient, `document.querySelectorAll('.card').length === 3 && document.querySelector('#count').textContent === '3 queries'`),
       'two externally captured questions in the visible queue',
     );
+    await waitFor(
+      () => sideValue(sideClient, `document.querySelectorAll('.card')[0].querySelectorAll('.dogear-asset-chip').length === 3`),
+      'complete atomic rendering of three inline image chips',
+    );
+
+    const batchPersistence = await sideValue(sideClient, `(async () => {
+      const files = ['#10b981', '#8b5cf6', '#f97316'].map((color, index) => new File([
+        '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="50"><rect width="80" height="50" fill="' + color + '"/></svg>',
+      ], 'batch-race-' + (index + 1) + '.svg', { type: 'image/svg+xml' }));
+      await liveComposers[0].addFiles(files);
+      const queue = await getQueue();
+      const added = queue[0].message.parts.filter((part) =>
+        part.type === 'asset' && part.label.startsWith('batch-race-')
+      );
+      const records = await Promise.all(added.map((part) => ASSETS.get(part.assetId)));
+      const allPersisted = added.length === 3 && records.every(Boolean);
+
+      const addedIds = new Set(added.map((part) => part.assetId));
+      queue[0].message.parts = queue[0].message.parts.filter((part) =>
+        part.type !== 'asset' || !addedIds.has(part.assetId)
+      );
+      await setQueue(queue);
+      await collectGarbage(queue);
+      return { added: added.length, allPersisted };
+    })()`);
+    if (batchPersistence.added !== 3 || !batchPersistence.allPersisted) {
+      throw new Error(`Multi-image persistence regression: ${JSON.stringify(batchPersistence)}`);
+    }
+    await waitFor(
+      () => sideValue(sideClient, `document.querySelectorAll('.handoff-asset').length === 3`),
+      'cleanup of temporary multi-image batch',
+    );
+    await waitFor(
+      () => sideValue(sideClient, `document.querySelectorAll('.card')[0].querySelectorAll('.dogear-asset-chip').length === 3`),
+      'inline image chips after batch cleanup render',
+    );
 
     const interactionState = await sideValue(sideClient, `({
       cardsAreStatic: [...document.querySelectorAll('.card')].every((element) => !element.draggable),
@@ -216,11 +255,71 @@ async function main() {
     if (Object.values(interactionState).some((value) => !value)) {
       throw new Error(`Queue interaction regression: ${JSON.stringify(interactionState)}`);
     }
+
+    const inlineReorder = await sideValue(sideClient, `(async () => {
+      const editor = document.querySelector('.dogear-composer');
+      const chip = editor.querySelector('.dogear-asset-chip');
+      const movedAssetId = chip.dataset.assetId;
+      const suffix = document.createTextNode(' sadsa');
+      editor.appendChild(suffix);
+      const range = document.createRange();
+      range.setStart(suffix, suffix.data.length);
+      range.collapse(true);
+      const original = document.caretRangeFromPoint;
+      document.caretRangeFromPoint = () => range;
+      const transfer = new DataTransfer();
+      chip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
+      editor.dispatchEvent(new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 1,
+        clientY: 1,
+        dataTransfer: transfer,
+      }));
+      document.caretRangeFromPoint = original;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const queue = await getQueue();
+      const parts = queue[0].message.parts;
+      return {
+        chipIsDraggable: chip.draggable,
+        movedAfterSuffix: parts.at(-1)?.type === 'asset' && parts.at(-1)?.assetId === movedAssetId && parts.at(-2)?.text.endsWith('sadsa'),
+      };
+    })()`);
+    if (!inlineReorder.chipIsDraggable || !inlineReorder.movedAfterSuffix) {
+      throw new Error(`Inline asset reorder regression: ${JSON.stringify(inlineReorder)}`);
+    }
+
+    await sideValue(sideClient, `document.querySelector('#ask-page').click()`);
+    await waitFor(
+      () => page.evaluate(() => {
+        const shadow = document.querySelector('#dogear-host')?.shadowRoot;
+        return shadow?.querySelector('.popover')?.style.display === 'block' &&
+          shadow.querySelector('.excerpt')?.textContent.includes('no selection');
+      }),
+      'whole-page question popover',
+    );
+    await page.evaluate(() => {
+      const shadow = document.querySelector('#dogear-host').shadowRoot;
+      const editor = shadow.querySelector('.question');
+      editor.textContent = 'Summarize this whole page.';
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+      shadow.querySelector('.add').click();
+    });
+    await waitFor(
+      () => sideValue(sideClient, `(async () => {
+        const queue = await getQueue();
+        return queue.length === 4 && DOGEAR_MODEL.locatorOf(queue[3]).type === 'unanchored' && document.querySelector('#count').textContent === '4 queries';
+      })()`),
+      'whole-page question in the visible queue',
+    );
     report.push({
       label: 'Queue synchronization and content interaction',
       handoffRows: 3,
-      visibleQueries: 3,
+      visibleQueries: 4,
       ...interactionState,
+      batchImagesPersisted: batchPersistence.allPersisted,
+      ...inlineReorder,
+      askPage: true,
     });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);
 
@@ -248,7 +347,7 @@ async function main() {
       await recordStep(`${label}: ${expected} attached row${expected === 1 ? '' : 's'}`);
     }
 
-    await recordStep('PASS: handoff visible, 3 captures rendered, content selectable, handle-only reorder');
+    await recordStep('PASS: 4 questions rendered, inline image moved, whole-page ask added');
     await recordStep('ChatGPT-style fixture: ready to attach three images');
     await sideValue(sideClient, `document.querySelector('.handoff-all').click()`);
     await expectAttached(3, 'ChatGPT attach-all');
