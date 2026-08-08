@@ -44,6 +44,10 @@ let manualHandoffRenderVersion = 0;
 
 const SOFT_CAP = 10;
 const ATTACHMENT_STATUS_KEY = 'attachmentStatus';
+const QUESTION_HISTORY_LIMIT = 5;
+const questionUndoStack = [];
+const questionRedoStack = [];
+let questionHistoryMutation = Promise.resolve();
 
 async function getQueue() {
   const { queue = [] } = await chrome.storage.local.get('queue');
@@ -78,7 +82,13 @@ async function setQueueQuietly(queue) {
 }
 
 async function collectGarbage(queue, retainedAssetIds = []) {
-  const referenced = [...queue.flatMap(M.assetIdsOf), ...retainedAssetIds];
+  const questionHistoryAssetIds = [...questionUndoStack, ...questionRedoStack]
+    .flatMap((action) => M.assetIdsOf(action.item));
+  const referenced = [
+    ...queue.flatMap(M.assetIdsOf),
+    ...retainedAssetIds,
+    ...questionHistoryAssetIds,
+  ];
   await ASSETS.removeUnreferenced(referenced);
   const keep = new Set(referenced);
   const { [ATTACHMENT_STATUS_KEY]: current = {} } =
@@ -489,10 +499,55 @@ async function move(id, delta) {
 
 async function remove(id) {
   const queue = await getQueue();
-  const next = queue.filter((x) => x.id !== id);
+  const index = queue.findIndex((item) => item.id === id);
+  if (index === -1) return;
+  const [item] = queue.splice(index, 1);
+  questionUndoStack.push({ item, index });
+  if (questionUndoStack.length > QUESTION_HISTORY_LIMIT) questionUndoStack.shift();
+  questionRedoStack.length = 0;
+  const next = queue;
   await setQueue(next);
   await collectGarbage(next);
+  note('Question deleted — press Command/Ctrl+Z to restore it.');
 }
+
+async function applyQuestionHistory(redo) {
+  const from = redo ? questionRedoStack : questionUndoStack;
+  if (!from.length) return false;
+  const action = from.pop();
+  const queue = await getQueue();
+  if (redo) {
+    const index = queue.findIndex((item) => item.id === action.item.id);
+    if (index !== -1) queue.splice(index, 1);
+    questionUndoStack.push(action);
+  } else {
+    if (!queue.some((item) => item.id === action.item.id)) {
+      queue.splice(Math.min(action.index, queue.length), 0, action.item);
+    }
+    questionRedoStack.push(action);
+  }
+  await setQueue(queue);
+  await collectGarbage(queue);
+  note(redo ? 'Question deleted again.' : 'Question restored.');
+  return true;
+}
+
+function queueQuestionHistory(redo) {
+  questionHistoryMutation = questionHistoryMutation.then(() => applyQuestionHistory(redo));
+  return questionHistoryMutation;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+  if (event.key.toLowerCase() !== 'z') return;
+  const target = event.target;
+  if (target instanceof Element &&
+      (target.closest('.dogear-composer, input, textarea, select') || target.isContentEditable)) return;
+  const stack = event.shiftKey ? questionRedoStack : questionUndoStack;
+  if (!stack.length) return;
+  event.preventDefault();
+  queueQuestionHistory(event.shiftKey);
+});
 
 // ---------- prompt composition ----------
 // All user-facing prompt text comes from prompts/<lang>.js template packs.
@@ -717,6 +772,8 @@ document.getElementById('clear').addEventListener('click', async () => {
   const queue = await getQueue();
   if (!queue.length) return;
   if (confirm(`Remove all ${queue.length} queries?`)) {
+    questionUndoStack.length = 0;
+    questionRedoStack.length = 0;
     await setQueue([]);
     await collectGarbage([]);
   }
