@@ -1,8 +1,8 @@
 {
   "name": "dogear-vscode",
   "displayName": "Dogear",
-  "description": "Select code or text, attach a query to each selection, then compose them for the Claude Code or Codex sidebar as one prompt.",
-  "version": "0.1.1",
+  "description": "Collect code, text, and image selections with multimodal questions, then compose them for Claude Code or Codex.",
+  "version": "0.2.0",
   "publisher": "ylsung",
   "license": "MIT",
   "engines": { "vscode": "^1.90.0" },
