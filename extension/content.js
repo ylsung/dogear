@@ -516,6 +516,17 @@
     composer.setParts([]).then(() => composer.focus());
   }
 
+  function openPagePopover() {
+    closePopover();
+    const source = sourceReference();
+    savedCapture = { kind: 'page', source };
+    excerptEl.replaceChildren();
+    excerptEl.textContent = 'Asking about this page — no selection';
+    positionNear(popover, { bottom: 18, left: Math.max(18, window.innerWidth - 380) });
+    popover.style.display = 'block';
+    composer.setParts([]).then(() => composer.focus());
+  }
+
   function closePopover() {
     popover.style.display = 'none';
     savedCapture = null;
@@ -646,6 +657,14 @@
       });
       await addQueueItem(item, cap.source.url);
       return;
+    } else if (cap.kind === 'page') {
+      const item = M.createPageRequest({
+        id: crypto.randomUUID(),
+        source: cap.source,
+        messageParts,
+      });
+      await addQueueItem(item, cap.source.url, cap);
+      return;
     } else if (cap.kind === 'range') {
       anchor = makeAnchor(cap.range);
       // In the bundled PDF.js viewer, record which PDF page the selection is on.
@@ -773,6 +792,10 @@
     if (msg && msg.type === 'dogear-start-region') {
       attachHost();
       startRegionCapture();
+    }
+    if (msg && msg.type === 'dogear-open-page-ask') {
+      attachHost();
+      openPagePopover();
     }
   });
 
