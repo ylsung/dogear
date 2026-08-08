@@ -6,6 +6,31 @@
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked** and pick the [`extension/`](extension/) folder
 
+## Multimodal questions
+
+Each queued question can contain an ordered mix of text and images. Dogear keeps
+the context you were looking at separate from the references you add to the
+question, then assembles both into one labeled prompt at delivery time.
+
+Choose the context that fits the question:
+
+- **Selected text** — select a passage and use the Dogear hotkey. The queued
+  question retains the quote, surrounding text, source page, and its numbered
+  highlight.
+- **Screenshot** — use the hotkey without selected text, or click **Capture
+  screenshot** in the side panel. Drag around part of the visible page or choose
+  **Use visible page** to capture the entire viewport as image context.
+- **Ask page** — click **Ask page** in the side panel for a general question that
+  does not need a text highlight or screenshot. The question still records the
+  active page as its source.
+
+Inside either the on-page composer or a queued question, paste or drop images,
+or use **＋ Image** to choose several files. Image thumbnails sit inline with the
+text: drag one to the exact insertion point you want, and hover over it to see
+its full filename. Text edits, image removal, and deleted question cards can be
+restored with `Command+Z` on macOS or `Ctrl+Z` on Windows/Linux; the editor keeps
+up to five recent mixed-content steps.
+
 ## Usage
 
 1. On any page, select text → press the hotkey (`Alt+Q` on Windows/Linux,
@@ -13,7 +38,8 @@
    applies suggested hotkeys at install time; check or rebind at
    `chrome://extensions/shortcuts`. The side panel shows your actual binding.
    Press the hotkey without selected text to capture part or all of the visible
-   page as image context. You can also use **Capture screenshot** in the side panel.
+   page as image context. You can also use **Capture screenshot** in the side panel,
+   or choose **Ask page** to start a question without selected context.
 2. Type your query, optionally pasting or dropping reference images directly into
    the composer, then press Enter. Text selections get a numbered highlight and
    the multimodal query lands in the queue (badge on the toolbar icon).
