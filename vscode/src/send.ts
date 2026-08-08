@@ -45,6 +45,24 @@ export async function copyPrompt(
   await vscode.env.clipboard.writeText(promptWithLocalPaths(prompt, assets));
 }
 
+export async function attachToCodex(
+  assets: readonly DeliveryAsset[],
+): Promise<{ attachedIds: string[]; unavailable: boolean }> {
+  if (!vscode.extensions.getExtension(SIDEBAR_TARGETS.codex.extensionId)) {
+    return { attachedIds: [], unavailable: true };
+  }
+  const attachedIds: string[] = [];
+  for (const asset of assets) {
+    try {
+      await vscode.commands.executeCommand('chatgpt.addFileToThread', asset.uri);
+      attachedIds.push(asset.id);
+    } catch {
+      // Return partial progress so the manual handoff can retry failed files.
+    }
+  }
+  return { attachedIds, unavailable: false };
+}
+
 /**
  * Put a prompt on the clipboard, focus the requested extension's sidebar, and
  * invoke VS Code's paste command in the focused webview.
@@ -73,14 +91,7 @@ export async function sendToSidebar(
 
   let attached = 0;
   if (target === 'codex') {
-    for (const asset of assets) {
-      try {
-        await vscode.commands.executeCommand('chatgpt.addFileToThread', asset.uri);
-        attached += 1;
-      } catch {
-        // Keep going; the local-path prompt below is the supported fallback.
-      }
-    }
+    attached = (await attachToCodex(assets)).attachedIds.length;
   }
 
   const deliveredPrompt = target === 'codex' && attached === assets.length

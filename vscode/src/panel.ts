@@ -5,7 +5,7 @@ import { QueueStore, QueueItem, UserMessage, assetIdsOf, coalesceParts } from '.
 import { AssetStore } from './assets';
 import { Decorations } from './decorations';
 import { locateAnchor, rangeFromOffsets } from './anchors';
-import { copyPrompt, DeliveryAsset, sendToSidebar } from './send';
+import { attachToCodex, copyPrompt, DeliveryAsset, sendToSidebar } from './send';
 
 export class DogearPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dogear.queue';
@@ -205,6 +205,20 @@ export class DogearPanel implements vscode.WebviewViewProvider {
           ? 'Prompt copied with local image paths — attach the files if the destination cannot read them.'
           : 'Prompt copied — paste it into any chat.');
         break;
+      case 'attachAssets': {
+        const requestId = String(msg.requestId || '');
+        try {
+          const result = await attachToCodex(this.deliveryAssets(msg.assetIds));
+          this.respond(requestId, result);
+        } catch (error) {
+          this.respond(
+            requestId,
+            undefined,
+            error instanceof Error ? error.message : 'Could not attach images to Codex.',
+          );
+        }
+        break;
+      }
       case 'send':
         await sendToSidebar(msg.target, msg.prompt, this.deliveryAssets(msg.assetIds));
         break;
@@ -335,6 +349,11 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   </main>
 
   <footer>
+    <details id="manual-handoff" hidden>
+      <summary id="manual-summary">Manual handoff</summary>
+      <p>Attach every labeled image to Codex in one step. For Claude Code or another chat, the copied prompt includes local image paths as the fallback.</p>
+      <div id="manual-assets"></div>
+    </details>
     <div class="actions">
       <button id="copy" title="Copy the composed prompt to the clipboard">Copy prompt</button>
       <button id="to-claude" title="Paste the composed prompt into the Claude Code sidebar without sending">→ Claude Code</button>

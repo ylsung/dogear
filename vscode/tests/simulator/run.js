@@ -38,6 +38,11 @@ const fixture = `<!doctype html>
     <p class="empty" id="empty"><kbd id="hotkey">…</kbd></p>
   </main>
   <footer>
+    <details id="manual-handoff" hidden>
+      <summary id="manual-summary">Manual handoff</summary>
+      <p>Attach images.</p>
+      <div id="manual-assets"></div>
+    </details>
     <div class="actions">
       <button id="copy">Copy prompt</button>
       <button id="to-claude">→ Claude Code</button>
@@ -64,6 +69,12 @@ const fixture = `<!doctype html>
               displayName: message.displayName,
               previewUrl: 'data:' + message.mediaType + ';base64,' + message.base64,
             },
+          }})));
+        } else if (message.type === 'attachAssets') {
+          setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: {
+            type: 'response',
+            requestId: message.requestId,
+            result: { attachedIds: message.assetIds, unavailable: false },
           }})));
         }
       },
@@ -198,6 +209,13 @@ async function main() {
     assert.match(copied.prompt, /First line\nSecond line/);
     assert.match(copied.prompt, /\[Image I1\]/);
     assert.match(copied.prompt, /Selected context: \[Image I1\]/);
+    await page.locator('#manual-handoff').waitFor();
+    assert.equal(await page.locator('.handoff-asset').count(), 3);
+    await page.locator('.handoff-all').click();
+    await page.locator('.handoff-all.attached').waitFor();
+    const attached = await page.evaluate(() =>
+      window.__hostMessages.findLast((message) => message.type === 'attachAssets'));
+    assert.deepEqual(attached.assetIds, ['asset-1', 'asset-2', 'asset-3']);
 
     await page.locator('.card[data-id="q2"] .dogear-remove-asset').last().click();
     await page.waitForFunction(() => window.__hostMessages.some((message) =>
@@ -216,7 +234,7 @@ async function main() {
       'stable',
     );
 
-    console.log('PASS: multiline text, three images, stable queue echoes, image context, and prompt labels');
+    console.log('PASS: multiline text, three images, stable queue echoes, image context, prompt labels, and manual handoff');
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

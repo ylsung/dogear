@@ -19,6 +19,9 @@ const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
 const countEl = document.getElementById('count');
 const noteEl = document.getElementById('note');
+const handoffEl = document.getElementById('manual-handoff');
+const handoffSummaryEl = document.getElementById('manual-summary');
+const handoffAssetsEl = document.getElementById('manual-assets');
 
 const SOFT_CAP = 10;
 
@@ -32,6 +35,8 @@ let queueCache = [];
 let assetPreviews = {};
 let requestSequence = 0;
 const pendingRequests = new Map();
+let manualHandoffAssets = [];
+let manuallyAttachedIds = new Set();
 
 async function getQueue() {
   return queueCache;
@@ -529,6 +534,67 @@ function buildAssetPlan(queue) {
   });
 }
 
+function renderManualHandoff() {
+  const assets = manualHandoffAssets;
+  handoffEl.hidden = !assets.length;
+  handoffAssetsEl.replaceChildren();
+  if (!assets.length) return;
+
+  handoffSummaryEl.textContent = `Manual handoff · ${assets.length} ${assets.length === 1 ? 'image' : 'images'}`;
+  const remaining = assets.filter((asset) => !manuallyAttachedIds.has(asset.id));
+  const attachAll = document.createElement('button');
+  attachAll.className = 'handoff-all';
+  if (!remaining.length) {
+    attachAll.textContent = `✓ All ${assets.length} attached to Codex`;
+    attachAll.classList.add('attached');
+    attachAll.disabled = true;
+  } else {
+    attachAll.textContent = `Attach all ${remaining.length} ${remaining.length === 1 ? 'image' : 'images'} to Codex`;
+    attachAll.addEventListener('click', async () => {
+      attachAll.disabled = true;
+      try {
+        const result = await requestHost('attachAssets', {
+          assetIds: remaining.map((asset) => asset.id),
+        });
+        if (result.unavailable) {
+          note('Codex is not installed. Use the local image paths included in the copied prompt.');
+        } else {
+          (result.attachedIds || []).forEach((id) => manuallyAttachedIds.add(id));
+          const failed = remaining.length - (result.attachedIds || []).length;
+          note(failed
+            ? `${failed} ${failed === 1 ? 'image' : 'images'} could not be attached. Retry the remaining images.`
+            : 'All images attached to Codex. Paste the copied prompt when ready.');
+        }
+      } catch (error) {
+        note(error.message || 'Could not attach images to Codex.');
+      }
+      renderManualHandoff();
+    });
+  }
+  handoffAssetsEl.appendChild(attachAll);
+
+  assets.forEach((asset) => {
+    const row = document.createElement('div');
+    row.className = 'handoff-asset';
+    if (manuallyAttachedIds.has(asset.id)) row.classList.add('attached');
+    const img = document.createElement('img');
+    img.src = assetPreviews[asset.id] || '';
+    img.alt = '';
+    const label = document.createElement('span');
+    label.textContent = `${asset.label} · ${asset.deliveredName}`;
+    label.title = asset.deliveredName;
+    row.append(img, label);
+    handoffAssetsEl.appendChild(row);
+  });
+}
+
+function showManualHandoff(assets) {
+  manualHandoffAssets = assets;
+  manuallyAttachedIds = new Set();
+  renderManualHandoff();
+  handoffEl.open = true;
+}
+
 function renderParts(parts, labels) {
   return (parts || []).map((part) =>
     part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
@@ -597,6 +663,7 @@ async function composeOrWarn() {
 document.getElementById('copy').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
+  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'copy',
     prompt: prompt.text,
