@@ -311,18 +311,81 @@ async function main() {
       queue = await getQueue();
       parts = queue[0].message.parts;
       const assetParts = parts.filter((part) => part.type === 'asset');
+      const dropOnImagePreserved = assetParts.length === 3 &&
+        new Set(assetParts.map((part) => part.assetId)).size === 3 &&
+        editor.querySelectorAll('.dogear-asset-chip .dogear-asset-chip').length === 0;
       return {
         chipIsDraggable: chip.draggable,
         insertionCaretShown,
         movedAfterSuffix,
         caretBesideTarget,
-        dropOnImagePreserved: assetParts.length === 3 &&
-          new Set(assetParts.map((part) => part.assetId)).size === 3 &&
-          editor.querySelectorAll('.dogear-asset-chip .dogear-asset-chip').length === 0,
+        dropOnImagePreserved,
       };
     })()`);
     if (Object.values(inlineReorder).some((value) => !value)) {
       throw new Error(`Inline asset reorder regression: ${JSON.stringify(inlineReorder)}`);
+    }
+
+    const undoTarget = await sideValue(sideClient, `(() => {
+      const chip = document.querySelector('.dogear-composer .dogear-asset-chip');
+      const rect = chip.querySelector('.dogear-remove-asset').getBoundingClientRect();
+      return {
+        assetId: chip.dataset.assetId,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+    })()`);
+    await sideClient.Input.dispatchMouseEvent({
+      type: 'mousePressed',
+      x: undoTarget.x,
+      y: undoTarget.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await sideClient.Input.dispatchMouseEvent({
+      type: 'mouseReleased',
+      x: undoTarget.x,
+      y: undoTarget.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await waitFor(
+      () => sideValue(sideClient, `!document.querySelector('[data-asset-id="${undoTarget.assetId}"]')`),
+      'trusted inline image removal from the draft',
+    );
+    const retainedForUndo = await sideValue(sideClient, `(async () => !!(await ASSETS.get('${undoTarget.assetId}')))()`);
+    const undoAccepted = await sideValue(sideClient, `(() => {
+      const editor = document.querySelector('.dogear-composer');
+      return !editor.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z',
+        code: 'KeyZ',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    })()`);
+    let undoState = null;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      undoState = await sideValue(sideClient, `(async () => {
+        const queue = await getQueue();
+        const inQueue = queue[0].message.parts.some((part) => part.type === 'asset' && part.assetId === '${undoTarget.assetId}');
+        const inEditor = !!document.querySelector('[data-asset-id="${undoTarget.assetId}"]');
+        return { inQueue, inEditor, cardCount: document.querySelectorAll('.card').length };
+      })()`);
+      if (undoState.inQueue && undoState.inEditor) break;
+      await wait(50);
+    }
+    const undoRestoredImage = undoState.inQueue && undoState.inEditor;
+    const imageUndo = {
+      removedFromDraft: true,
+      retainedForUndo,
+      undoAccepted,
+      undoRestoredImage,
+      undoInQueue: undoState.inQueue,
+      undoInEditor: undoState.inEditor,
+    };
+    if (Object.values(imageUndo).some((value) => !value)) {
+      throw new Error(`Inline image undo regression: ${JSON.stringify(imageUndo)}`);
     }
 
     await sideValue(sideClient, `document.querySelector('#ask-page').click()`);
@@ -355,6 +418,7 @@ async function main() {
       ...interactionState,
       batchImagesPersisted: batchPersistence.allPersisted,
       ...inlineReorder,
+      ...imageUndo,
       askPage: true,
     });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);
