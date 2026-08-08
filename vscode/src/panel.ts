@@ -12,6 +12,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   private static readonly maxAssetBytes = 15 * 1024 * 1024;
   private view: vscode.WebviewView | undefined;
   private viewWaiters: Array<() => void> = [];
+  private messageMutation = Promise.resolve();
   private pendingComposition:
     | { resolve: (message: UserMessage | undefined) => void; assetIds: Set<string> }
     | undefined;
@@ -35,7 +36,14 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       ],
     };
     view.webview.html = this.html(view.webview);
-    view.webview.onDidReceiveMessage((msg) => this.onMessage(msg));
+    view.webview.onDidReceiveMessage((msg) => {
+      this.messageMutation = this.messageMutation
+        .then(() => this.onMessage(msg))
+        .catch((error) => {
+          console.error('Dogear panel message failed:', error);
+          this.note('Dogear could not save that change. Please try again.');
+        });
+    });
     view.onDidDispose(() => {
       if (this.view === view) this.view = undefined;
       void this.cancelComposition();
