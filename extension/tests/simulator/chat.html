@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dogear attachment simulator</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px system-ui, sans-serif; color: #172033; background: #f1f5f9; }
+    main { max-width: 880px; margin: 36px auto; padding: 0 24px; }
+    h1 { margin-bottom: 4px; }
+    #target-label { color: #475569; margin-bottom: 24px; }
+    #open-dogear { float: right; margin-top: -52px; padding: 8px 12px; border: 0; border-radius: 7px; background: #1d4ed8; color: white; cursor: pointer; }
+    form { background: white; border: 1px solid #cbd5e1; border-radius: 14px; padding: 18px; }
+    #attachments { display: flex; gap: 10px; flex-wrap: wrap; min-height: 82px; margin-bottom: 14px; }
+    .attachment, .file-preview {
+      position: relative; width: 150px; height: 76px; padding: 10px 28px 10px 10px;
+      border: 1px solid #94a3b8; border-radius: 9px; background: #e2e8f0;
+      overflow: hidden;
+    }
+    .attachment strong, .file-preview strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .attachment small, .file-preview small { color: #64748b; }
+    .remove {
+      position: absolute; top: 5px; right: 5px; width: 22px; height: 22px;
+      border: 0; border-radius: 50%; background: #334155; color: white; cursor: pointer;
+    }
+    #prompt-textarea {
+      min-height: 110px; padding: 12px; border: 1px solid #94a3b8;
+      border-radius: 9px; outline: none; white-space: pre-wrap;
+    }
+    #prompt-textarea:empty::before { content: 'Paste the Dogear prompt here…'; color: #94a3b8; }
+    #event-log { margin-top: 18px; padding: 12px; border-radius: 9px; background: #0f172a; color: #d1fae5; min-height: 94px; }
+    #event-log div { margin: 3px 0; }
+    .retained-filename { font-size: 1px; color: rgba(0,0,0,.01); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Dogear attachment simulator</h1>
+    <div id="target-label"></div>
+    <button id="open-dogear" type="button">Open Dogear side panel</button>
+    <form>
+      <input id="file-input" type="file" accept="image/*" multiple hidden />
+      <div id="attachments"></div>
+      <div id="prompt-textarea" contenteditable="true" class="ProseMirror"></div>
+      <div id="ghosts"></div>
+    </form>
+    <div id="event-log" aria-live="polite"></div>
+  </main>
+  <script>
+    const target = new URLSearchParams(location.search).get('target') || 'chatgpt';
+    const label = document.getElementById('target-label');
+    const input = document.getElementById('file-input');
+    const attachments = document.getElementById('attachments');
+    const ghosts = document.getElementById('ghosts');
+    const logEl = document.getElementById('event-log');
+    let files = [];
+    label.textContent = target === 'claude'
+      ? 'Claude-style: anonymous chips are asynchronously replaced after upload.'
+      : 'ChatGPT-style: removing a middle chip retains a stale filename node.';
+
+    function log(message) {
+      const row = document.createElement('div');
+      row.textContent = message;
+      logEl.prepend(row);
+    }
+
+    function removeAt(index) {
+      const [removed] = files.splice(index, 1);
+      if (target === 'chatgpt' && index < files.length) {
+        const ghost = document.createElement('span');
+        ghost.className = 'retained-filename';
+        ghost.textContent = removed.name;
+        ghosts.appendChild(ghost);
+      }
+      log(`Removed ${removed.name}`);
+      render();
+    }
+
+    function render() {
+      attachments.replaceChildren();
+      files.forEach((file, index) => {
+        const chip = document.createElement('div');
+        chip.className = target === 'claude' ? 'file-preview' : 'attachment';
+        if (target === 'chatgpt') chip.dataset.testid = `attachment-${index}`;
+        const name = document.createElement('strong');
+        name.textContent = target === 'claude' ? `Image ${index + 1}` : file.name;
+        const detail = document.createElement('small');
+        detail.textContent = target === 'claude' ? 'ready' : `${Math.ceil(file.size / 1024)} KB`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'remove';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', target === 'claude' ? 'Remove attachment' : `Remove ${file.name}`);
+        remove.addEventListener('click', () => removeAt(index));
+        chip.append(name, detail, remove);
+        attachments.appendChild(chip);
+      });
+    }
+
+    input.addEventListener('change', () => {
+      files = [...input.files];
+      log(`Accepted ${files.length} files: ${files.map((file) => file.name).join(', ')}`);
+      render();
+      if (target === 'claude') {
+        setTimeout(() => {
+          render();
+          log('Claude-style asynchronous chip replacement');
+        }, 350);
+      }
+    });
+  </script>
+</body>
+</html>

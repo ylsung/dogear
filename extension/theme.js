@@ -54,5 +54,10 @@ globalThis.DOGEAR_THEME = {
     // Destructive
     danger: '#dc2626',
     dangerBg: '#fee2e2',
+
+    // Confirmed handoff state
+    success: '#166534',
+    successBorder: '#22c55e',
+    successBg: '#dcfce7',
   },
 };

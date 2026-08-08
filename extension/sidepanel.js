@@ -31,11 +31,23 @@ const noteEl = document.getElementById('note');
 const M = globalThis.DOGEAR_MODEL;
 const ASSETS = globalThis.DOGEAR_ASSETS;
 const COMPOSER = globalThis.DOGEAR_COMPOSER;
+const handoffEl = document.getElementById('manual-handoff');
+const handoffSummaryEl = document.getElementById('manual-summary');
+const handoffAssetsEl = document.getElementById('manual-assets');
 const liveObjectUrls = [];
+const handoffObjectUrls = [];
 const liveComposers = [];
-let quietQueueWrites = 0;
+const pendingQuietQueueWrites = new Map();
+let renderRequested = false;
+let renderRunning = false;
+let manualHandoffRenderVersion = 0;
 
 const SOFT_CAP = 10;
+const ATTACHMENT_STATUS_KEY = 'attachmentStatus';
+const QUESTION_HISTORY_LIMIT = 5;
+const questionUndoStack = [];
+const questionRedoStack = [];
+let questionHistoryMutation = Promise.resolve();
 
 async function getQueue() {
   const { queue = [] } = await chrome.storage.local.get('queue');
@@ -46,9 +58,49 @@ async function setQueue(queue) {
   await chrome.storage.local.set({ queue });
 }
 
+function queueFingerprint(queue) {
+  return JSON.stringify(queue || []);
+}
+
+function queueOrderFingerprint(queue) {
+  return JSON.stringify((queue || []).map((item) => item.id));
+}
+
+function consumeQuietQueueWrite(fingerprint) {
+  const count = pendingQuietQueueWrites.get(fingerprint) || 0;
+  if (!count) return false;
+  if (count === 1) pendingQuietQueueWrites.delete(fingerprint);
+  else pendingQuietQueueWrites.set(fingerprint, count - 1);
+  return true;
+}
+
 async function setQueueQuietly(queue) {
-  quietQueueWrites += 1;
-  await chrome.storage.local.set({ queue });
+  const fingerprint = queueFingerprint(queue);
+  pendingQuietQueueWrites.set(fingerprint, (pendingQuietQueueWrites.get(fingerprint) || 0) + 1);
+  try {
+    await chrome.storage.local.set({ queue });
+  } catch (error) {
+    consumeQuietQueueWrite(fingerprint);
+    throw error;
+  }
+}
+
+async function collectGarbage(queue, retainedAssetIds = []) {
+  const questionHistoryAssetIds = [...questionUndoStack, ...questionRedoStack]
+    .flatMap((action) => M.assetIdsOf(action.item));
+  const referenced = [
+    ...queue.flatMap(M.assetIdsOf),
+    ...retainedAssetIds,
+    ...questionHistoryAssetIds,
+  ];
+  await ASSETS.removeUnreferenced(referenced);
+  const keep = new Set(referenced);
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const next = Object.fromEntries(Object.entries(current).filter(([id]) => keep.has(id)));
+  if (Object.keys(next).length !== Object.keys(current).length) {
+    await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
+  }
 }
 
 function note(msg) {
@@ -229,8 +281,16 @@ async function render() {
       const groupIdx = groupBlocks.length;
       groupBlocks.push([]);
       group.dataset.groupIdx = String(groupIdx);
-      group.draggable = true;
-      group.addEventListener('dragstart', (e) => {
+      const sourceHeader = document.createElement('div');
+      sourceHeader.className = 'source-header';
+      const groupDragHandle = document.createElement('span');
+      groupDragHandle.className = 'drag-handle group-drag-handle';
+      groupDragHandle.draggable = true;
+      groupDragHandle.role = 'button';
+      groupDragHandle.tabIndex = 0;
+      groupDragHandle.title = 'Drag to reorder this source group';
+      groupDragHandle.textContent = '⋮⋮';
+      groupDragHandle.addEventListener('dragstart', (e) => {
         dragMode = 'group';
         draggedGroupIdx = groupIdx;
         e.dataTransfer.effectAllowed = 'move';
@@ -252,7 +312,8 @@ async function render() {
       const label = document.createElement('span');
       label.textContent = sourceInfo.title;
       src.append(icon, label);
-      group.appendChild(src);
+      sourceHeader.append(src, groupDragHandle);
+      group.appendChild(sourceHeader);
       listEl.appendChild(group);
       lastUrl = sourceInfo.url;
     }
@@ -261,11 +322,10 @@ async function render() {
     const card = document.createElement('div');
     card.className = 'card';
     card.dataset.id = item.id;
-    card.draggable = true;
     if (selectedIds.has(item.id)) card.classList.add('selected');
 
     card.addEventListener('click', async (e) => {
-      if (e.target.closest('.dogear-composer, textarea, input, button')) return;
+      if (e.target.closest('.dogear-composer, blockquote, .context-images, textarea, input, button, a')) return;
       if (e.shiftKey && lastAnchorId) {
         await selectRange(lastAnchorId, item.id);
       } else if (e.metaKey || e.ctrlKey) {
@@ -280,21 +340,6 @@ async function render() {
       applySelectionClasses();
     });
 
-    card.addEventListener('dragstart', (e) => {
-      if (e.target.closest('.dogear-composer, input, button')) {
-        e.preventDefault();
-        return;
-      }
-      e.stopPropagation(); // don't also start the enclosing group's drag
-      dragMode = 'card';
-      if (!selectedIds.has(item.id)) {
-        selectedIds = new Set([item.id]);
-        applySelectionClasses();
-      }
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', item.id);
-    });
-
     const top = document.createElement('div');
     top.className = 'top';
     const num = document.createElement('span');
@@ -306,7 +351,7 @@ async function render() {
       quote.textContent = truncate(contextText, 220);
       quote.title = contextText;
       top.append(num, quote);
-    } else {
+    } else if (locator.type !== 'unanchored') {
       const images = document.createElement('div');
       images.className = 'context-images';
       top.append(num, images);
@@ -323,18 +368,30 @@ async function render() {
           images.appendChild(img);
         });
       }
+    } else {
+      const pageContext = document.createElement('span');
+      pageContext.className = 'page-context';
+      pageContext.textContent = 'Whole page';
+      top.append(num, pageContext);
     }
 
     const q = document.createElement('div');
     q.dataset.placeholder = 'Type a question, paste an image, or drop one here…';
     let draftParts = item.message.parts;
-    const saveDraft = async (parts) => {
-      const queueNow = await getQueue();
-      const target = queueNow.find((x) => x.id === item.id);
-      if (target) {
-        target.message = { role: 'user', parts: M.coalesceParts(parts) };
-        await setQueueQuietly(queueNow);
-      }
+    let saveDraftChain = Promise.resolve();
+    const undoRetainedAssetIds = new Set();
+    const saveDraft = (parts) => {
+      const snapshot = M.coalesceParts(parts);
+      saveDraftChain = saveDraftChain.catch(() => {}).then(async () => {
+        const queueNow = await getQueue();
+        const target = queueNow.find((x) => x.id === item.id);
+        if (target) {
+          target.message = { role: 'user', parts: snapshot };
+          await setQueueQuietly(queueNow);
+          await collectGarbage(queueNow, undoRetainedAssetIds);
+        }
+      });
+      return saveDraftChain;
     };
     const composer = COMPOSER.create(q, {
       parts: item.message.parts,
@@ -352,10 +409,29 @@ async function render() {
         return url;
       },
       onChange: (parts, reason) => {
+        const previousAssetIds = new Set(
+          draftParts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        const nextAssetIds = new Set(
+          parts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        for (const id of previousAssetIds) {
+          if (!nextAssetIds.has(id)) undoRetainedAssetIds.add(id);
+        }
+        for (const id of nextAssetIds) undoRetainedAssetIds.delete(id);
         draftParts = parts;
-        if (reason === 'asset') saveDraft(parts);
+        if (reason === 'asset') return saveDraft(parts);
       },
-      onBlur: () => saveDraft(draftParts),
+      onBlur: (parts, event) => {
+        draftParts = parts;
+        if (event.relatedTarget instanceof Node && card.contains(event.relatedTarget)) return;
+        return saveDraft(parts);
+      },
+      onDestroy: () => {
+        if (!undoRetainedAssetIds.size) return;
+        undoRetainedAssetIds.clear();
+        getQueue().then(collectGarbage);
+      },
       onError: note,
     });
     liveComposers.push(composer);
@@ -372,6 +448,23 @@ async function render() {
 
     const tools = document.createElement('div');
     tools.className = 'tools';
+    const cardDragHandle = document.createElement('span');
+    cardDragHandle.className = 'drag-handle card-drag-handle';
+    cardDragHandle.draggable = true;
+    cardDragHandle.role = 'button';
+    cardDragHandle.tabIndex = 0;
+    cardDragHandle.title = 'Drag to reorder this question';
+    cardDragHandle.textContent = '⋮⋮';
+    cardDragHandle.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      dragMode = 'card';
+      if (!selectedIds.has(item.id)) {
+        selectedIds = new Set([item.id]);
+        applySelectionClasses();
+      }
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+    });
     const mk = (label, title, fn) => {
       const b = document.createElement('button');
       b.textContent = label;
@@ -380,6 +473,7 @@ async function render() {
       return b;
     };
     tools.append(
+      cardDragHandle,
       mk('＋ Image', 'Attach one or more images to this question', () => attachInput.click()),
       mk('↑', 'Move up', () => move(item.id, -1)),
       mk('↓', 'Move down', () => move(item.id, +1)),
@@ -389,6 +483,22 @@ async function render() {
     card.append(top, q, attachInput, tools);
     group.appendChild(card);
   });
+  await renderManualHandoff(queue);
+}
+
+async function scheduleRender() {
+  renderRequested = true;
+  if (renderRunning) return;
+  renderRunning = true;
+  try {
+    while (renderRequested) {
+      renderRequested = false;
+      await render();
+    }
+  } finally {
+    renderRunning = false;
+    if (renderRequested) scheduleRender();
+  }
 }
 
 async function move(id, delta) {
@@ -402,8 +512,55 @@ async function move(id, delta) {
 
 async function remove(id) {
   const queue = await getQueue();
-  await setQueue(queue.filter((x) => x.id !== id));
+  const index = queue.findIndex((item) => item.id === id);
+  if (index === -1) return;
+  const [item] = queue.splice(index, 1);
+  questionUndoStack.push({ item, index });
+  if (questionUndoStack.length > QUESTION_HISTORY_LIMIT) questionUndoStack.shift();
+  questionRedoStack.length = 0;
+  const next = queue;
+  await setQueue(next);
+  await collectGarbage(next);
+  note('Question deleted — press Command/Ctrl+Z to restore it.');
 }
+
+async function applyQuestionHistory(redo) {
+  const from = redo ? questionRedoStack : questionUndoStack;
+  if (!from.length) return false;
+  const action = from.pop();
+  const queue = await getQueue();
+  if (redo) {
+    const index = queue.findIndex((item) => item.id === action.item.id);
+    if (index !== -1) queue.splice(index, 1);
+    questionUndoStack.push(action);
+  } else {
+    if (!queue.some((item) => item.id === action.item.id)) {
+      queue.splice(Math.min(action.index, queue.length), 0, action.item);
+    }
+    questionRedoStack.push(action);
+  }
+  await setQueue(queue);
+  await collectGarbage(queue);
+  note(redo ? 'Question deleted again.' : 'Question restored.');
+  return true;
+}
+
+function queueQuestionHistory(redo) {
+  questionHistoryMutation = questionHistoryMutation.then(() => applyQuestionHistory(redo));
+  return questionHistoryMutation;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+  if (event.key.toLowerCase() !== 'z') return;
+  const target = event.target;
+  if (target instanceof Element &&
+      (target.closest('.dogear-composer, input, textarea, select') || target.isContentEditable)) return;
+  const stack = event.shiftKey ? questionRedoStack : questionUndoStack;
+  if (!stack.length) return;
+  event.preventDefault();
+  queueQuestionHistory(event.shiftKey);
+});
 
 // ---------- prompt composition ----------
 // All user-facing prompt text comes from prompts/<lang>.js template packs.
@@ -437,9 +594,48 @@ function sourceCitation(item, P) {
   return { title, url: `${P.localFile || 'local file'}: ${filename}` };
 }
 
-function composePrompt(queue) {
+function safeFilename(name) {
+  const leaf = String(name || 'image.png').split(/[\\/]/).pop();
+  return leaf.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'image.png';
+}
+
+async function buildAssetPlan(queue) {
+  const ids = [];
+  for (const item of queue) {
+    for (const context of item.selectedContext) {
+      for (const part of context.parts) {
+        if (part.type === 'asset' && !ids.includes(part.assetId)) ids.push(part.assetId);
+      }
+    }
+    for (const part of item.message.parts) {
+      if (part.type === 'asset' && !ids.includes(part.assetId)) ids.push(part.assetId);
+    }
+  }
+  const assets = [];
+  for (let index = 0; index < ids.length; index += 1) {
+    const record = await ASSETS.get(ids[index]);
+    if (!record) continue;
+    const shortLabel = `I${index + 1}`;
+    assets.push({
+      id: record.id,
+      label: `Image ${shortLabel}`,
+      deliveredName: `${shortLabel}-${safeFilename(record.displayName)}`,
+      record,
+    });
+  }
+  return assets;
+}
+
+function renderParts(parts, labels) {
+  return parts.map((part) =>
+    part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
+  ).join('');
+}
+
+function composePrompt(queue, assets) {
   const P = globalThis.DOGEAR_PROMPTS[promptLang] || globalThis.DOGEAR_PROMPTS.en;
   const lines = [P.header(queue.length)];
+  const labels = new Map(assets.map((asset) => [asset.id, asset.label]));
 
   let lastUrl = null;
   let sourceIdx = 0;
@@ -454,13 +650,24 @@ function composePrompt(queue) {
       lastUrl = source.url;
     }
     const where = locator.page ? P.pdfPage(locator.page) : '';
-    const contextText = M.textOf(item.selectedContext.flatMap((context) => context.parts));
-    lines.push('', P.excerpt(idx + 1, where, contextText || '[Image selection]'));
+    const contextParts = item.selectedContext.flatMap((context) => context.parts);
+    const contextText = renderParts(contextParts, labels);
+    const hasContextAsset = contextParts.some((part) => part.type === 'asset');
+    lines.push('', locator.type === 'unanchored'
+      ? P.pageQuestion(idx + 1)
+      : hasContextAsset
+        ? P.multimodalSelection(idx + 1, where, contextText)
+        : P.excerpt(idx + 1, where, contextText));
     if (locator.prefix || locator.suffix) {
       lines.push(P.context(locator.prefix, locator.suffix));
     }
-    lines.push(P.question(M.textOf(item.message.parts)));
+    lines.push(P.question(renderParts(item.message.parts, labels)));
   });
+
+  if (assets.length) {
+    lines.push('', P.attachmentsHeader);
+    assets.forEach((asset) => lines.push(P.attachment(asset.label, asset.deliveredName)));
+  }
 
   return lines.join('\n');
 }
@@ -474,33 +681,138 @@ async function composeOrWarn() {
   if (queue.length > SOFT_CAP) {
     note(`Heads up: ${queue.length} queries in one prompt may dilute answer quality.`);
   }
-  return composePrompt(queue);
+  const assets = await buildAssetPlan(queue);
+  return { text: composePrompt(queue, assets), assets };
+}
+
+async function renderManualHandoff(queue) {
+  const version = ++manualHandoffRenderVersion;
+  const assets = await buildAssetPlan(queue);
+  const { [ATTACHMENT_STATUS_KEY]: attachmentStatus = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  if (version !== manualHandoffRenderVersion) return;
+  handoffObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+  handoffAssetsEl.replaceChildren();
+  handoffEl.hidden = !assets.length;
+  if (!assets.length) return;
+  handoffSummaryEl.textContent = `Manual handoff · ${assets.length} ${assets.length === 1 ? 'image' : 'images'}`;
+
+  const all = document.createElement('button');
+  all.type = 'button';
+  all.className = 'handoff-all';
+  const attachedCount = assets.filter((asset) => attachmentStatus[asset.id]?.state === 'attached').length;
+  const allAttached = attachedCount === assets.length;
+  all.classList.toggle('attached', allAttached);
+  all.title = `Attach all ${assets.length} images to the active tab`;
+  all.textContent = allAttached
+    ? `✓ All ${assets.length} ${assets.length === 1 ? 'image is' : 'images are'} attached`
+    : `▦ Attach all ${assets.length} ${assets.length === 1 ? 'image' : 'images'} to this tab`;
+  all.addEventListener('click', async () => {
+    all.disabled = true;
+    await attachAssetsToCurrentTab(assets);
+    all.disabled = false;
+  });
+  handoffAssetsEl.appendChild(all);
+
+  if (attachedCount) {
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'handoff-reset';
+    reset.textContent = 'Reset attachment status';
+    reset.addEventListener('click', () => resetAttachmentStatus(assets));
+    handoffAssetsEl.appendChild(reset);
+  }
+
+  for (const asset of assets) {
+    const row = document.createElement('div');
+    row.className = 'handoff-asset';
+    const status = attachmentStatus[asset.id];
+    row.classList.toggle('attached', status?.state === 'attached');
+    if (status?.state === 'attached') {
+      row.title = status.monitored
+        ? 'Attached; Dogear is watching this tab for removal'
+        : 'Attached; use Reset if it is removed from the destination';
+    }
+    const url = URL.createObjectURL(asset.record.blob);
+    handoffObjectUrls.push(url);
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = '';
+    const label = document.createElement('span');
+    label.textContent = `${status?.state === 'attached' ? '✓ ' : ''}${asset.label} · ${asset.deliveredName}`;
+    const tools = document.createElement('div');
+    tools.className = 'handoff-tools';
+    const attach = document.createElement('button');
+    attach.type = 'button';
+    attach.textContent = 'Attach';
+    attach.title = 'Attach this image to the active tab';
+    attach.addEventListener('click', async () => {
+      attach.disabled = true;
+      await attachAssetsToCurrentTab([asset]);
+      attach.disabled = false;
+    });
+    const download = document.createElement('button');
+    download.type = 'button';
+    download.textContent = 'Save';
+    download.title = 'Save this image if the destination uploader is not accessible';
+    download.addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = asset.deliveredName;
+      link.click();
+    });
+    tools.append(attach, download);
+    row.append(img, label, tools);
+    handoffAssetsEl.appendChild(row);
+  }
 }
 
 // ---------- delivery ----------
 
 document.getElementById('copy').addEventListener('click', async () => {
-  const prompt = await composeOrWarn();
-  if (!prompt) return;
-  await navigator.clipboard.writeText(prompt);
-  note('Prompt copied — paste it into any chat.');
+  const delivery = await composeOrWarn();
+  if (!delivery) return;
+  await navigator.clipboard.writeText(delivery.text);
+  if (delivery.assets.length) {
+    handoffEl.open = true;
+    note(`Prompt copied — open the destination chat, then click “Attach all ${delivery.assets.length} ${delivery.assets.length === 1 ? 'image' : 'images'} to this tab.”`);
+  } else {
+    note('Prompt copied — paste it into any chat.');
+  }
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
   const queue = await getQueue();
   if (!queue.length) return;
-  if (confirm(`Remove all ${queue.length} queries?`)) await setQueue([]);
+  if (confirm(`Remove all ${queue.length} queries?`)) {
+    questionUndoStack.length = 0;
+    questionRedoStack.length = 0;
+    await setQueue([]);
+    await collectGarbage([]);
+  }
 });
 
 document.getElementById('capture-region').addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) return;
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-start-region' });
+    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-start-region' }, { frameId: 0 });
     await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(tab.id, { active: true });
   } catch (_) {
     note('Dogear cannot capture this browser page.');
+  }
+});
+
+document.getElementById('ask-page').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-open-page-ask' }, { frameId: 0 });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tab.id, { active: true });
+  } catch (_) {
+    note('Dogear cannot ask about this browser page.');
   }
 });
 
@@ -532,9 +844,285 @@ function injectPrompt(text) {
   return document.execCommand('insertText', false, text);
 }
 
+// Runs inside a destination tab. Reconstructing every image in a single
+// DataTransfer is important: repeated one-file changes cause some uploaders to
+// replace the previous selection and retain only the last image.
+async function injectFiles(payloads) {
+  globalThis.__dogearAttachmentMonitor?.disconnect?.();
+
+  const transfer = new DataTransfer();
+  for (const payload of payloads) {
+    const binary = atob(payload.dataUrl.split(',')[1]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    transfer.items.add(new File([bytes], payload.name, {
+      type: payload.mimeType,
+      lastModified: payload.lastModified,
+    }));
+  }
+  const composer =
+    document.querySelector('#prompt-textarea') ||
+    document.querySelector('div[contenteditable="true"].ProseMirror') ||
+    document.querySelector('main div[contenteditable="true"]') ||
+    document.querySelector('main textarea');
+  const scope = composer?.closest('form') || composer?.parentElement?.parentElement || document.body;
+  const removeSelector = [
+    'button[aria-label*="remove" i]',
+    'button[aria-label*="delete" i]',
+    'button[title*="remove" i]',
+    'button[title*="delete" i]',
+    'button[data-testid*="remove" i]',
+    'button[data-testid*="delete" i]',
+  ].join(',');
+  const isOutsideComposer = (element) =>
+    element.getClientRects().length > 0 &&
+    !composer?.contains(element) && !element.contains(composer);
+  const baselineControls = new Set(
+    [...scope.querySelectorAll(removeSelector)].filter(isOutsideComposer),
+  );
+  const inputs = [...document.querySelectorAll('input[type="file"]')];
+  const acceptsImages = (candidate) => /image|\*|png|jpe?g|webp/i.test(candidate.accept || '');
+  const input =
+    inputs.find((candidate) => candidate.multiple && acceptsImages(candidate)) ||
+    inputs.find(acceptsImages) ||
+    inputs.find((candidate) => candidate.multiple) ||
+    inputs[0];
+  let delivered = false;
+  let method = '';
+  if (input) {
+    try {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'files',
+      ).set;
+      setter.call(input, transfer.files);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      delivered = true;
+      method = 'input';
+      // Continue below: after dispatch, inspect the destination's attachment UI
+      // and install a live removal observer when its chips can be identified.
+    } catch (_) {
+      // Fall through to a synthetic drop for composers without a file input.
+    }
+  }
+  if (!delivered) {
+    if (!composer) return { ok: false, count: 0, monitoring: false };
+    composer.dispatchEvent(new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: transfer,
+    }));
+    method = 'drop';
+  }
+
+  const allIds = payloads.map((payload) => payload.assetId);
+
+  function searchableElements() {
+    return [...scope.querySelectorAll('*')].filter((element) =>
+      element.getClientRects().length > 0 &&
+      !composer?.contains(element) && !element.contains(composer),
+    );
+  }
+
+  function idsVisibleByName() {
+    const elements = searchableElements();
+    return payloads.filter((payload) => {
+      const token = payload.name.toLowerCase();
+      return elements.some((element) => {
+        const attributes = [
+          element.getAttribute('aria-label'),
+          element.getAttribute('title'),
+          element.getAttribute('data-testid'),
+          element.childElementCount === 0 ? element.textContent : '',
+        ].filter(Boolean).join(' ').toLowerCase();
+        return attributes.includes(token);
+      });
+    }).map((payload) => payload.assetId);
+  }
+
+  function removalControls() {
+    return [...scope.querySelectorAll(removeSelector)].filter((element) =>
+      isOutsideComposer(element) && !baselineControls.has(element),
+    );
+  }
+
+  // Wait briefly for React/Vue upload state to materialize attachment chips.
+  let namedIds = [];
+  let controls = [];
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    namedIds = idsVisibleByName();
+    controls = removalControls();
+    if (namedIds.length === allIds.length || controls.length >= allIds.length) break;
+  }
+
+  const mode = namedIds.length === allIds.length
+    ? 'names'
+    : controls.length >= allIds.length
+      ? 'controls'
+      : null;
+  if (!mode) {
+    return { ok: true, count: transfer.files.length, method, monitoring: false };
+  }
+
+  const forcedRemoved = new Set();
+  const wiredControls = new WeakSet();
+  let timer = null;
+  let previous = '';
+
+  function wireRemovalControls() {
+    const current = removalControls();
+    const remainingIds = allIds.filter((id) => !forcedRemoved.has(id));
+    current.forEach((control, index) => {
+      if (wiredControls.has(control) || !remainingIds[index]) return;
+      wiredControls.add(control);
+      const assetId = remainingIds[index];
+      const removed = () => {
+        forcedRemoved.add(assetId);
+        setTimeout(report, 0);
+      };
+      control.addEventListener('pointerdown', removed, { capture: true, once: true });
+      control.addEventListener('click', removed, { capture: true, once: true });
+    });
+  }
+
+  function report() {
+    wireRemovalControls();
+    let presentAssetIds;
+    if (mode === 'names') {
+      presentAssetIds = idsVisibleByName().filter((id) => !forcedRemoved.has(id));
+    } else {
+      const remainingIds = allIds.filter((id) => !forcedRemoved.has(id));
+      presentAssetIds = removalControls().length >= remainingIds.length ? remainingIds : [];
+    }
+    const signature = presentAssetIds.join('|');
+    if (signature === previous) return;
+    previous = signature;
+    chrome.runtime.sendMessage({
+      type: 'dogear-attachment-status',
+      assetIds: allIds,
+      presentAssetIds,
+    }).catch(() => {});
+  }
+  const observer = new MutationObserver(() => {
+    clearTimeout(timer);
+    timer = setTimeout(report, 120);
+  });
+  observer.observe(scope, { childList: true, subtree: true, attributes: true });
+  const monitor = {
+    disconnect() {
+      clearTimeout(timer);
+      observer.disconnect();
+    },
+  };
+  globalThis.__dogearAttachmentMonitor = monitor;
+  report();
+  return { ok: true, count: transfer.files.length, method, monitoring: true };
+}
+
+function stopAttachmentMonitor() {
+  globalThis.__dogearAttachmentMonitor?.disconnect?.();
+  delete globalThis.__dogearAttachmentMonitor;
+}
+
+function dataUrlForBlob(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Could not read attachment.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function payloadsForAssets(assets) {
+  return Promise.all(assets.map(async (asset) => ({
+    assetId: asset.id,
+    dataUrl: await dataUrlForBlob(asset.record.blob),
+    name: asset.deliveredName,
+    mimeType: asset.record.mimeType,
+    lastModified: asset.record.createdAt,
+  })));
+}
+
+async function attachAssetsToTab(tab, assets) {
+  if (!tab?.id || !assets.length) return { ok: false, monitoring: false };
+  try {
+    await clearAttachmentTracking(assets);
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: injectFiles,
+      args: [await payloadsForAssets(assets)],
+    });
+    const outcome = result?.result;
+    if (!outcome?.ok || outcome.count !== assets.length) {
+      return { ok: false, monitoring: false };
+    }
+    await markAttachmentStatus(assets, tab.id, !!outcome.monitoring);
+    return { ok: true, monitoring: !!outcome.monitoring };
+  } catch (_) {
+    return { ok: false, monitoring: false };
+  }
+}
+
+async function markAttachmentStatus(assets, tabId, monitored) {
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const next = { ...current };
+  for (const asset of assets) {
+    next[asset.id] = {
+      state: 'attached',
+      tabId,
+      monitored,
+      updatedAt: Date.now(),
+    };
+  }
+  await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
+}
+
+async function resetAttachmentStatus(assets) {
+  await clearAttachmentTracking(assets);
+  note('Attachment status reset.');
+}
+
+async function clearAttachmentTracking(assets) {
+  const ids = new Set(assets.map((asset) => asset.id));
+  const { [ATTACHMENT_STATUS_KEY]: current = {} } =
+    await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  const tabIds = [...new Set(
+    Object.entries(current)
+      .filter(([id]) => ids.has(id))
+      .map(([, status]) => status.tabId),
+  )];
+  await Promise.all(tabIds.map((tabId) => chrome.scripting.executeScript({
+    target: { tabId },
+    func: stopAttachmentMonitor,
+  }).catch(() => {})));
+  // One destination observer may own several assets. If it is stopped, reset
+  // every status from that tab so no row remains green without live tracking.
+  const resetTabs = new Set(tabIds);
+  const next = Object.fromEntries(Object.entries(current).filter(([id, status]) =>
+    !ids.has(id) && !resetTabs.has(status.tabId),
+  ));
+  await chrome.storage.session.set({ [ATTACHMENT_STATUS_KEY]: next });
+}
+
+async function attachAssetsToCurrentTab(assets) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const outcome = await attachAssetsToTab(tab, assets);
+  if (outcome.ok) {
+    note(outcome.monitoring
+      ? `Attached ${assets.length} ${assets.length === 1 ? 'image' : 'images'}; removal tracking is active.`
+      : `Attached ${assets.length} ${assets.length === 1 ? 'image' : 'images'}; use Reset if the site removes them.`);
+  } else {
+    note('Could not find an image uploader in this tab. Open its attachment menu and try again, or use Save.');
+  }
+  return outcome.ok;
+}
+
 async function sendToChat(kind) {
-  const prompt = await composeOrWarn();
-  if (!prompt) return;
+  const delivery = await composeOrWarn();
+  if (!delivery) return;
   const cfg =
     kind === 'chatgpt'
       ? { patterns: ['https://chatgpt.com/*', 'https://chat.openai.com/*'], home: 'https://chatgpt.com/', label: 'ChatGPT' }
@@ -549,12 +1137,16 @@ async function sendToChat(kind) {
   // Inject first, focus after: once the chat tab is focused the side panel
   // loses focus and clipboard writes are rejected ("Document is not focused").
   const tab = tabs.find((t) => t.active) || tabs[0];
+  const attachmentOutcome = delivery.assets.length
+    ? await attachAssetsToTab(tab, delivery.assets)
+    : { ok: true, monitoring: false };
+  const failedAssets = delivery.assets.length && !attachmentOutcome.ok ? delivery.assets : [];
   let inserted = false;
   try {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: injectPrompt,
-      args: [prompt],
+      args: [delivery.text],
     });
     inserted = !!(result && result.result);
   } catch (e) {
@@ -563,11 +1155,23 @@ async function sendToChat(kind) {
   if (inserted) {
     await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(tab.id, { active: true });
-    note(`Prompt inserted into ${cfg.label} — review it and hit send.`);
+    if (failedAssets.length) {
+      handoffEl.open = true;
+      note(`Prompt inserted, but the images still need attaching. Open ${cfg.label}'s attachment menu and click “Attach all” in Dogear.`);
+    } else {
+      note(`Prompt${delivery.assets.length ? ' and images' : ''} inserted into ${cfg.label} — review and send.`);
+    }
   } else {
     try {
-      await navigator.clipboard.writeText(prompt);
-      note(`Couldn't find ${cfg.label}'s input box (site may have changed) — prompt copied to clipboard instead.`);
+      await navigator.clipboard.writeText(delivery.text);
+      if (failedAssets.length) handoffEl.open = true;
+      if (failedAssets.length) {
+        note(`Couldn't complete ${cfg.label} handoff — prompt copied; open its attachment menu and use Dogear's “Attach all” button.`);
+      } else if (delivery.assets.length) {
+        note(`Images attached, but the prompt was copied — paste it into ${cfg.label}.`);
+      } else {
+        note(`Couldn't find ${cfg.label}'s input box — prompt copied to the clipboard.`);
+      }
     } catch (e) {
       note('Couldn\'t insert or copy automatically — use the "Copy prompt" button.');
     }
@@ -616,13 +1220,21 @@ async function updateHotkeyHint() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.queue) return;
-  if (quietQueueWrites > 0) {
-    quietQueueWrites -= 1;
+  if (area === 'session' && changes[ATTACHMENT_STATUS_KEY]) {
+    getQueue().then(renderManualHandoff);
     return;
   }
-  render();
+  if (area === 'local' && changes.queue) {
+    const sameQuestionOrder =
+      queueOrderFingerprint(changes.queue.oldValue) === queueOrderFingerprint(changes.queue.newValue);
+    if (sameQuestionOrder) {
+      consumeQuietQueueWrite(queueFingerprint(changes.queue.newValue));
+      getQueue().then(renderManualHandoff);
+      return;
+    }
+    scheduleRender();
+  }
 });
 
 updateHotkeyHint();
-render();
+scheduleRender();

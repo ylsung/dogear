@@ -117,11 +117,21 @@
     };
   }
 
+  function createPageRequest({ id, source, messageParts, createdAt = Date.now() }) {
+    return {
+      id,
+      selectedContext: [{ source, locator: { type: 'unanchored' }, parts: [] }],
+      message: { role: 'user', parts: coalesceParts(messageParts) },
+      createdAt,
+    };
+  }
+
   const api = {
     assetIdsOf,
     assetPart,
     coalesceParts,
     createImageRequest,
+    createPageRequest,
     createTextRequest,
     locatorOf,
     normalizeItem,

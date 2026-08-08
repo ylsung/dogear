@@ -1,4 +1,5 @@
 .DS_Store
+artifacts/
 
 # Internal planning doc — not part of the public project.
 /PRD.md
