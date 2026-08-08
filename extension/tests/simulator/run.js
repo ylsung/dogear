@@ -213,6 +213,21 @@ async function main() {
       'complete atomic rendering of three inline image chips',
     );
 
+    const internalFocus = await sideValue(sideClient, `(async () => {
+      const card = document.querySelectorAll('.card')[0];
+      card.dataset.simulatorIdentity = 'stable-card';
+      card.querySelector('.dogear-composer').focus();
+      card.querySelector('.tools button').focus();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return {
+        cardStayedMounted: document.querySelector('[data-simulator-identity="stable-card"]') === card,
+        imagesStayedVisible: card.querySelectorAll('.dogear-asset-chip').length === 3,
+      };
+    })()`);
+    if (Object.values(internalFocus).some((value) => !value)) {
+      throw new Error(`Internal card focus regression: ${JSON.stringify(internalFocus)}`);
+    }
+
     const batchPersistence = await sideValue(sideClient, `(async () => {
       const files = ['#10b981', '#8b5cf6', '#f97316'].map((color, index) => new File([
         '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="50"><rect width="80" height="50" fill="' + color + '"/></svg>',
@@ -231,6 +246,7 @@ async function main() {
       );
       await setQueue(queue);
       await collectGarbage(queue);
+      await liveComposers[0].setParts(queue[0].message.parts);
       return { added: added.length, allPersisted };
     })()`);
     if (batchPersistence.added !== 3 || !batchPersistence.allPersisted) {
@@ -311,18 +327,156 @@ async function main() {
       queue = await getQueue();
       parts = queue[0].message.parts;
       const assetParts = parts.filter((part) => part.type === 'asset');
+      const dropOnImagePreserved = assetParts.length === 3 &&
+        new Set(assetParts.map((part) => part.assetId)).size === 3 &&
+        editor.querySelectorAll('.dogear-asset-chip .dogear-asset-chip').length === 0;
       return {
         chipIsDraggable: chip.draggable,
         insertionCaretShown,
         movedAfterSuffix,
         caretBesideTarget,
-        dropOnImagePreserved: assetParts.length === 3 &&
-          new Set(assetParts.map((part) => part.assetId)).size === 3 &&
-          editor.querySelectorAll('.dogear-asset-chip .dogear-asset-chip').length === 0,
+        dropOnImagePreserved,
       };
     })()`);
     if (Object.values(inlineReorder).some((value) => !value)) {
       throw new Error(`Inline asset reorder regression: ${JSON.stringify(inlineReorder)}`);
+    }
+
+    const undoTarget = await sideValue(sideClient, `(() => {
+      const chip = document.querySelector('.dogear-composer .dogear-asset-chip');
+      const rect = chip.querySelector('.dogear-remove-asset').getBoundingClientRect();
+      return {
+        assetId: chip.dataset.assetId,
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+    })()`);
+    await sideClient.Input.dispatchMouseEvent({
+      type: 'mousePressed',
+      x: undoTarget.x,
+      y: undoTarget.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await sideClient.Input.dispatchMouseEvent({
+      type: 'mouseReleased',
+      x: undoTarget.x,
+      y: undoTarget.y,
+      button: 'left',
+      clickCount: 1,
+    });
+    await waitFor(
+      () => sideValue(sideClient, `!document.querySelector('[data-asset-id="${undoTarget.assetId}"]')`),
+      'trusted inline image removal from the draft',
+    );
+    const retainedForUndo = await sideValue(sideClient, `(async () => !!(await ASSETS.get('${undoTarget.assetId}')))()`);
+    const undoAccepted = await sideValue(sideClient, `(() => {
+      const editor = document.querySelector('.dogear-composer');
+      return !editor.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z',
+        code: 'KeyZ',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    })()`);
+    let undoState = null;
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      undoState = await sideValue(sideClient, `(async () => {
+        const queue = await getQueue();
+        const inQueue = queue[0].message.parts.some((part) => part.type === 'asset' && part.assetId === '${undoTarget.assetId}');
+        const inEditor = !!document.querySelector('[data-asset-id="${undoTarget.assetId}"]');
+        return { inQueue, inEditor, cardCount: document.querySelectorAll('.card').length };
+      })()`);
+      if (undoState.inQueue && undoState.inEditor) break;
+      await wait(50);
+    }
+    const undoRestoredImage = undoState.inQueue && undoState.inEditor;
+    const imageUndo = {
+      removedFromDraft: true,
+      retainedForUndo,
+      undoAccepted,
+      undoRestoredImage,
+      undoInQueue: undoState.inQueue,
+      undoInEditor: undoState.inEditor,
+    };
+    if (Object.values(imageUndo).some((value) => !value)) {
+      throw new Error(`Inline image undo regression: ${JSON.stringify(imageUndo)}`);
+    }
+
+    const repeatedImageRemoval = await sideValue(sideClient, `(async () => {
+      const card = document.querySelectorAll('.card')[0];
+      card.dataset.repeatedRemovalIdentity = 'same-card';
+      const editor = card.querySelector('.dogear-composer');
+      const counts = [];
+      for (let remaining = 2; remaining >= 0; remaining -= 1) {
+        const button = editor.querySelector('.dogear-remove-asset');
+        button.focus();
+        button.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        counts.push(editor.querySelectorAll('.dogear-asset-chip').length);
+      }
+      for (let restored = 1; restored <= 3; restored += 1) {
+        editor.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true,
+        }));
+        await new Promise((resolve) => setTimeout(resolve, 180));
+      }
+      return {
+        everyRemovalWorkedFirstClick: JSON.stringify(counts) === JSON.stringify([2, 1, 0]),
+        threeImagesUndoRestored: editor.querySelectorAll('.dogear-asset-chip').length === 3,
+        cardDidNotFlashRebuild: document.querySelector('[data-repeated-removal-identity="same-card"]') === card,
+      };
+    })()`);
+    if (Object.values(repeatedImageRemoval).some((value) => !value)) {
+      throw new Error(`Repeated image removal regression: ${JSON.stringify(repeatedImageRemoval)}`);
+    }
+
+    const editorHistory = await sideValue(sideClient, `(async () => {
+      const editor = document.querySelector('.dogear-composer');
+      const tokens = Array.from({ length: 6 }, (_, index) => '[H' + (index + 1) + ']');
+      for (const token of tokens) {
+        editor.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertFromPaste',
+          data: token,
+        }));
+        editor.appendChild(document.createTextNode(token));
+        editor.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertFromPaste',
+          data: token,
+        }));
+      }
+      for (let index = 0; index < 5; index += 1) {
+        editor.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'z',
+          code: 'KeyZ',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      const draftText = DOGEAR_MODEL.textOf(liveComposers[0].getParts());
+      document.querySelector('#copy').focus();
+      let savedText = '';
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const queue = await getQueue();
+        savedText = DOGEAR_MODEL.textOf(queue[0].message.parts);
+        if (savedText.includes(tokens[0]) && tokens.slice(1).every((token) => !savedText.includes(token))) break;
+      }
+      return {
+        fiveStepsUndone: tokens.slice(1).every((token) => !draftText.includes(token)),
+        oldestStepRemains: draftText.includes(tokens[0]),
+        fiveStepDraftPersistedOnBlur: savedText.includes(tokens[0]) &&
+          tokens.slice(1).every((token) => !savedText.includes(token)),
+      };
+    })()`);
+    if (Object.values(editorHistory).some((value) => !value)) {
+      throw new Error(`Five-step editor history regression: ${JSON.stringify(editorHistory)}`);
     }
 
     await sideValue(sideClient, `document.querySelector('#ask-page').click()`);
@@ -333,6 +487,48 @@ async function main() {
           shadow.querySelector('.excerpt')?.textContent.includes('no selection');
       }),
       'whole-page question popover',
+    );
+    await page.evaluate(() => {
+      const shadow = document.querySelector('#dogear-host').shadowRoot;
+      const input = shadow.querySelector('.image-input');
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([
+        '<svg xmlns="http://www.w3.org/2000/svg" width="90" height="60"><rect width="90" height="60" fill="#06b6d4"/></svg>',
+      ], 'undo-preview.svg', { type: 'image/svg+xml' }));
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files').set;
+      setter.call(input, transfer.files);
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(
+      () => page.evaluate(() => {
+        const image = document.querySelector('#dogear-host').shadowRoot.querySelector('.dogear-asset-chip img');
+        return image?.complete && image.naturalWidth > 0;
+      }),
+      'initial on-page attachment thumbnail',
+    );
+    await page.evaluate(() => {
+      const shadow = document.querySelector('#dogear-host').shadowRoot;
+      const editor = shadow.querySelector('.question');
+      shadow.querySelector('.dogear-remove-asset').click();
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true,
+      }));
+    });
+    const onPageUndoThumbnailRestored = await waitFor(
+      () => page.evaluate(() => {
+        const image = document.querySelector('#dogear-host').shadowRoot.querySelector('.dogear-asset-chip img');
+        return image?.complete && image.naturalWidth > 0;
+      }),
+      'fresh thumbnail after on-page image undo',
+    );
+    await page.evaluate(() => {
+      document.querySelector('#dogear-host').shadowRoot.querySelector('.close').click();
+    });
+    await sideValue(sideClient, `document.querySelector('#ask-page').click()`);
+    await waitFor(
+      () => page.evaluate(() => document.querySelector('#dogear-host')?.shadowRoot
+        ?.querySelector('.popover')?.style.display === 'block'),
+      'reopened whole-page question popover',
     );
     await page.evaluate(() => {
       const shadow = document.querySelector('#dogear-host').shadowRoot;
@@ -348,13 +544,49 @@ async function main() {
       })()`),
       'whole-page question in the visible queue',
     );
+
+    const originalQuestionIds = await sideValue(sideClient, `(async () => (await getQueue()).map((item) => item.id))()`);
+    for (let remaining = 4; remaining > 0; remaining -= 1) {
+      await sideValue(sideClient, `document.querySelectorAll('.card')[${remaining - 1}].querySelector('.tools button:last-child').click()`);
+      await waitFor(
+        () => sideValue(sideClient, `document.querySelectorAll('.card').length === ${remaining - 1}`),
+        `question deletion leaving ${remaining - 1} cards`,
+      );
+    }
+    const deletedQuestionAssetsRetained = await sideValue(sideClient, `(async () => {
+      const records = await Promise.all(${JSON.stringify(seededAssets)}.map((asset) => ASSETS.get(asset.id)));
+      return records.every(Boolean);
+    })()`);
+    for (let restored = 1; restored <= 4; restored += 1) {
+      await sideValue(sideClient, `document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true,
+      }))`);
+      await waitFor(
+        () => sideValue(sideClient, `document.querySelectorAll('.card').length === ${restored}`),
+        `question undo restoring ${restored} cards`,
+      );
+    }
+    const restoredQuestionIds = await sideValue(sideClient, `(async () => (await getQueue()).map((item) => item.id))()`);
+    const questionHistory = {
+      fourQuestionsRestored: JSON.stringify(restoredQuestionIds) === JSON.stringify(originalQuestionIds),
+      deletedQuestionAssetsRetained,
+    };
+    if (Object.values(questionHistory).some((value) => !value)) {
+      throw new Error(`Question deletion history regression: ${JSON.stringify(questionHistory)}`);
+    }
     report.push({
       label: 'Queue synchronization and content interaction',
       handoffRows: 3,
       visibleQueries: 4,
       ...interactionState,
+      ...internalFocus,
       batchImagesPersisted: batchPersistence.allPersisted,
       ...inlineReorder,
+      ...imageUndo,
+      ...repeatedImageRemoval,
+      ...editorHistory,
+      ...questionHistory,
+      onPageUndoThumbnailRestored,
       askPage: true,
     });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);

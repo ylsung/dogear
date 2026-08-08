@@ -44,6 +44,10 @@ let manualHandoffRenderVersion = 0;
 
 const SOFT_CAP = 10;
 const ATTACHMENT_STATUS_KEY = 'attachmentStatus';
+const QUESTION_HISTORY_LIMIT = 5;
+const questionUndoStack = [];
+const questionRedoStack = [];
+let questionHistoryMutation = Promise.resolve();
 
 async function getQueue() {
   const { queue = [] } = await chrome.storage.local.get('queue');
@@ -56,6 +60,10 @@ async function setQueue(queue) {
 
 function queueFingerprint(queue) {
   return JSON.stringify(queue || []);
+}
+
+function queueOrderFingerprint(queue) {
+  return JSON.stringify((queue || []).map((item) => item.id));
 }
 
 function consumeQuietQueueWrite(fingerprint) {
@@ -77,8 +85,14 @@ async function setQueueQuietly(queue) {
   }
 }
 
-async function collectGarbage(queue) {
-  const referenced = queue.flatMap(M.assetIdsOf);
+async function collectGarbage(queue, retainedAssetIds = []) {
+  const questionHistoryAssetIds = [...questionUndoStack, ...questionRedoStack]
+    .flatMap((action) => M.assetIdsOf(action.item));
+  const referenced = [
+    ...queue.flatMap(M.assetIdsOf),
+    ...retainedAssetIds,
+    ...questionHistoryAssetIds,
+  ];
   await ASSETS.removeUnreferenced(referenced);
   const keep = new Set(referenced);
   const { [ATTACHMENT_STATUS_KEY]: current = {} } =
@@ -364,14 +378,20 @@ async function render() {
     const q = document.createElement('div');
     q.dataset.placeholder = 'Type a question, paste an image, or drop one here…';
     let draftParts = item.message.parts;
-    const saveDraft = async (parts) => {
-      const queueNow = await getQueue();
-      const target = queueNow.find((x) => x.id === item.id);
-      if (target) {
-        target.message = { role: 'user', parts: M.coalesceParts(parts) };
-        await setQueueQuietly(queueNow);
-        await collectGarbage(queueNow);
-      }
+    let saveDraftChain = Promise.resolve();
+    const undoRetainedAssetIds = new Set();
+    const saveDraft = (parts) => {
+      const snapshot = M.coalesceParts(parts);
+      saveDraftChain = saveDraftChain.catch(() => {}).then(async () => {
+        const queueNow = await getQueue();
+        const target = queueNow.find((x) => x.id === item.id);
+        if (target) {
+          target.message = { role: 'user', parts: snapshot };
+          await setQueueQuietly(queueNow);
+          await collectGarbage(queueNow, undoRetainedAssetIds);
+        }
+      });
+      return saveDraftChain;
     };
     const composer = COMPOSER.create(q, {
       parts: item.message.parts,
@@ -389,10 +409,29 @@ async function render() {
         return url;
       },
       onChange: (parts, reason) => {
+        const previousAssetIds = new Set(
+          draftParts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        const nextAssetIds = new Set(
+          parts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        for (const id of previousAssetIds) {
+          if (!nextAssetIds.has(id)) undoRetainedAssetIds.add(id);
+        }
+        for (const id of nextAssetIds) undoRetainedAssetIds.delete(id);
         draftParts = parts;
         if (reason === 'asset') return saveDraft(parts);
       },
-      onBlur: () => saveDraft(draftParts),
+      onBlur: (parts, event) => {
+        draftParts = parts;
+        if (event.relatedTarget instanceof Node && card.contains(event.relatedTarget)) return;
+        return saveDraft(parts);
+      },
+      onDestroy: () => {
+        if (!undoRetainedAssetIds.size) return;
+        undoRetainedAssetIds.clear();
+        getQueue().then(collectGarbage);
+      },
       onError: note,
     });
     liveComposers.push(composer);
@@ -473,10 +512,55 @@ async function move(id, delta) {
 
 async function remove(id) {
   const queue = await getQueue();
-  const next = queue.filter((x) => x.id !== id);
+  const index = queue.findIndex((item) => item.id === id);
+  if (index === -1) return;
+  const [item] = queue.splice(index, 1);
+  questionUndoStack.push({ item, index });
+  if (questionUndoStack.length > QUESTION_HISTORY_LIMIT) questionUndoStack.shift();
+  questionRedoStack.length = 0;
+  const next = queue;
   await setQueue(next);
   await collectGarbage(next);
+  note('Question deleted — press Command/Ctrl+Z to restore it.');
 }
+
+async function applyQuestionHistory(redo) {
+  const from = redo ? questionRedoStack : questionUndoStack;
+  if (!from.length) return false;
+  const action = from.pop();
+  const queue = await getQueue();
+  if (redo) {
+    const index = queue.findIndex((item) => item.id === action.item.id);
+    if (index !== -1) queue.splice(index, 1);
+    questionUndoStack.push(action);
+  } else {
+    if (!queue.some((item) => item.id === action.item.id)) {
+      queue.splice(Math.min(action.index, queue.length), 0, action.item);
+    }
+    questionRedoStack.push(action);
+  }
+  await setQueue(queue);
+  await collectGarbage(queue);
+  note(redo ? 'Question deleted again.' : 'Question restored.');
+  return true;
+}
+
+function queueQuestionHistory(redo) {
+  questionHistoryMutation = questionHistoryMutation.then(() => applyQuestionHistory(redo));
+  return questionHistoryMutation;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+  if (event.key.toLowerCase() !== 'z') return;
+  const target = event.target;
+  if (target instanceof Element &&
+      (target.closest('.dogear-composer, input, textarea, select') || target.isContentEditable)) return;
+  const stack = event.shiftKey ? questionRedoStack : questionUndoStack;
+  if (!stack.length) return;
+  event.preventDefault();
+  queueQuestionHistory(event.shiftKey);
+});
 
 // ---------- prompt composition ----------
 // All user-facing prompt text comes from prompts/<lang>.js template packs.
@@ -701,6 +785,8 @@ document.getElementById('clear').addEventListener('click', async () => {
   const queue = await getQueue();
   if (!queue.length) return;
   if (confirm(`Remove all ${queue.length} queries?`)) {
+    questionUndoStack.length = 0;
+    questionRedoStack.length = 0;
     await setQueue([]);
     await collectGarbage([]);
   }
@@ -1139,7 +1225,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
     return;
   }
   if (area === 'local' && changes.queue) {
-    if (consumeQuietQueueWrite(queueFingerprint(changes.queue.newValue))) {
+    const sameQuestionOrder =
+      queueOrderFingerprint(changes.queue.oldValue) === queueOrderFingerprint(changes.queue.newValue);
+    if (sameQuestionOrder) {
+      consumeQuietQueueWrite(queueFingerprint(changes.queue.newValue));
       getQueue().then(renderManualHandoff);
       return;
     }
