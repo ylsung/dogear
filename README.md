@@ -80,7 +80,9 @@ The same select-and-queue workflow, inside your editor, sending batches to
 
 1. Select code or text in any editor → press `⌃⌥Q` (Mac) / `Ctrl+Alt+Q`
    (Windows/Linux), or right-click → **Dogear: Add query for selection**. You
-   can also right-click an image file → **Dogear: Add query for image**.
+   can also right-click an image file → **Dogear: Add query for image**. On a
+   local Mac, press the hotkey without selected text to capture a screen region
+   and use it as the selected context.
 2. Use the Dogear sidebar composer for multiline text plus pasted, dropped, or
    selected reference images, then add the mixed-content question to the queue.
    Text selections are highlighted and image selections retain a preview.
@@ -93,8 +95,8 @@ The same select-and-queue workflow, inside your editor, sending batches to
    - **→ Codex** attaches queued images and pastes the composed prompt.
    - **→ Claude Code** pastes the prompt with local paths that Claude can read.
    - **Copy prompt** puts the prompt and labeled local image paths on the
-     clipboard; **Save images…** exports all images when manual attachment is
-     needed. Dogear never sends on your behalf.
+     clipboard and opens a **Manual handoff** tray that can attach every image
+     to Codex in one click. Dogear never sends on your behalf.
 
 It also supports capturing selections from VS Code's Markdown preview and from
 the Codex/Claude Code chat webviews via right-click, though those captures are
