@@ -248,6 +248,11 @@
         width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
       }
       .dogear-asset-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dogear-inline-drop-caret {
+        display: inline-block; width: 2px; height: 1.35em; margin: 0 1px;
+        border-radius: 1px; background: ${T.colors.primary}; vertical-align: text-bottom;
+        pointer-events: none;
+      }
       .dogear-remove-asset {
         border: 0; padding: 0 2px; background: transparent; color: ${T.colors.textFaint}; cursor: pointer;
       }
