@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { QueueItem, QueueStore } from './queue';
+import { QueueItem, QueueStore, UserMessage } from './queue';
 
 const CONTEXT_CHARS = 32; // same prefix/suffix window as the Chrome extension
 
@@ -30,18 +30,8 @@ function itemId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function askQuestion(title: string): Promise<string | undefined> {
-  const question = await vscode.window.showInputBox({
-    title: `Dogear — ${title}`,
-    placeHolder: 'Your query about this selection…',
-    prompt: 'Leave empty to fill in later from the Dogear sidebar.',
-    // Markdown Preview hands selections to the extension through a vscode://
-    // link opened in a separate target. Chromium briefly moves focus while
-    // dispatching that link; without this, the input appears and immediately
-    // dismisses itself. It is harmless for normal editor captures too.
-    ignoreFocusOut: true,
-  });
-  return question === undefined ? undefined : question.trim();
+export interface QuestionComposer {
+  compose(title: string): Promise<UserMessage | undefined>;
 }
 
 // Webviews owned by another extension do not expose their DOM or Selection to
@@ -63,6 +53,7 @@ async function copyFocusedWebviewSelection(): Promise<string> {
 
 export async function askWebviewSelection(
   store: QueueStore,
+  composer: QuestionComposer,
   surface: WebviewSurface,
 ): Promise<void> {
   const exact = await copyFocusedWebviewSelection();
@@ -73,13 +64,13 @@ export async function askWebviewSelection(
     return;
   }
   const meta = WEBVIEW_META[surface];
-  const question = await askQuestion(meta.title);
-  if (question === undefined) return;
+  const message = await composer.compose(meta.title);
+  if (!message) return;
   await store.add({
     id: itemId(),
     url: meta.url,
     title: meta.title,
-    message: { role: 'user', parts: question ? [{ type: 'text', text: question }] : [] },
+    message,
     page: null,
     lines: null,
     languageId: meta.languageId,
@@ -89,7 +80,10 @@ export async function askWebviewSelection(
   });
 }
 
-export async function askSelection(store: QueueStore): Promise<void> {
+export async function askSelection(
+  store: QueueStore,
+  composer: QuestionComposer,
+): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     vscode.window.showInformationMessage('Dogear: open a file and select some text first.');
@@ -104,8 +98,8 @@ export async function askSelection(store: QueueStore): Promise<void> {
   }
 
   const title = vscode.workspace.asRelativePath(doc.uri);
-  const question = await askQuestion(`${title}:${sel.start.line + 1}`);
-  if (question === undefined) return; // Esc = cancel, same as closing the popover
+  const message = await composer.compose(`${title}:${sel.start.line + 1}`);
+  if (!message) return;
 
   const start = doc.offsetAt(sel.start);
   const end = doc.offsetAt(sel.end);
@@ -115,10 +109,7 @@ export async function askSelection(store: QueueStore): Promise<void> {
     id: itemId(),
     url: doc.uri.toString(),
     title,
-    message: {
-      role: 'user',
-      parts: question.trim() ? [{ type: 'text', text: question.trim() }] : [],
-    },
+    message,
     page: null,
     lines: { start: sel.start.line + 1, end: sel.end.line + 1 },
     languageId: doc.languageId,

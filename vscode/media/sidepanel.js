@@ -29,6 +29,9 @@ const SOFT_CAP = 10;
 // chrome.storage.onChanged in the Chrome version).
 
 let queueCache = [];
+let assetPreviews = {};
+let requestSequence = 0;
+const pendingRequests = new Map();
 
 async function getQueue() {
   return queueCache;
@@ -44,12 +47,21 @@ window.addEventListener('message', (e) => {
   const msg = e.data;
   if (msg.type === 'state') {
     queueCache = msg.queue;
+    assetPreviews = msg.assets || {};
     if (msg.promptLang && globalThis.DOGEAR_PROMPTS[msg.promptLang]) {
       promptLang = msg.promptLang;
       langSelect.value = promptLang;
     }
     document.getElementById('hotkey').textContent = msg.hotkeyHint;
     render();
+  } else if (msg.type === 'response') {
+    const pending = pendingRequests.get(msg.requestId);
+    if (!pending) return;
+    pendingRequests.delete(msg.requestId);
+    if (msg.error) pending.reject(new Error(msg.error));
+    else pending.resolve(msg.result);
+  } else if (msg.type === 'compose') {
+    openCaptureComposer(msg.title);
   } else if (msg.type === 'note') {
     note(msg.msg);
   }
@@ -61,6 +73,90 @@ function note(msg) {
     if (noteEl.textContent === msg) noteEl.textContent = '';
   }, 4000);
 }
+
+function requestHost(type, payload = {}) {
+  const requestId = `request-${Date.now()}-${++requestSequence}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error('Dogear timed out while storing the image.'));
+    }, 30000);
+    pendingRequests.set(requestId, {
+      resolve: (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+    vscodeApi.postMessage({ type, requestId, ...payload });
+  });
+}
+
+async function fileBase64(file) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const chunks = [];
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 0x8000)));
+  }
+  return btoa(chunks.join(''));
+}
+
+// ---------- capture composer ----------
+
+const captureSection = document.getElementById('capture-composer');
+const captureTitle = document.getElementById('capture-title');
+const captureImages = document.getElementById('capture-images');
+const captureEditorApi = globalThis.DOGEAR_COMPOSER.create(
+  document.getElementById('capture-editor'),
+  {
+    parts: [],
+    maxFileSize: 15 * 1024 * 1024,
+    resolveAssetUrl: async (assetId) => assetPreviews[assetId],
+    storeFile: async (file) => {
+      const asset = await requestHost('storeComposerAsset', {
+        base64: await fileBase64(file),
+        mediaType: file.type,
+        displayName: file.name || 'pasted-image.png',
+      });
+      if (asset.previewUrl) assetPreviews[asset.id] = asset.previewUrl;
+      return asset;
+    },
+    onError: (error) => note(error),
+  },
+);
+
+async function openCaptureComposer(title) {
+  captureTitle.textContent = `Question about ${title}`;
+  captureSection.hidden = false;
+  await captureEditorApi.setParts([]);
+  captureEditorApi.focus();
+}
+
+function closeCaptureComposer(submit) {
+  const parts = submit ? captureEditorApi.getParts() : undefined;
+  captureSection.hidden = true;
+  vscodeApi.postMessage({ type: submit ? 'composeSubmit' : 'composeCancel', parts });
+}
+
+document.getElementById('capture-add-image').addEventListener('click', () => captureImages.click());
+captureImages.addEventListener('change', async () => {
+  await captureEditorApi.addFiles(captureImages.files);
+  captureImages.value = '';
+});
+document.getElementById('capture-cancel').addEventListener('click', () => closeCaptureComposer(false));
+document.getElementById('capture-submit').addEventListener('click', () => closeCaptureComposer(true));
+document.getElementById('capture-editor').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeCaptureComposer(false);
+  } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    closeCaptureComposer(true);
+  }
+});
 
 // ---------- rendering ----------
 
