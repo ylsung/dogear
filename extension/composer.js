@@ -4,6 +4,8 @@
 
 (() => {
   const M = globalThis.DOGEAR_MODEL;
+  const HISTORY_LIMIT = 5;
+  const GROUP_WINDOW_MS = 750;
 
   function childParts(node) {
     const parts = [];
@@ -56,9 +58,11 @@
     let draggedChip = null;
     let fileMutation = Promise.resolve();
     let partsRenderVersion = 0;
-    let assetUndoStack = [];
-    let assetRedoStack = [];
-    let assetUndoReady = false;
+    let undoStack = [];
+    let redoStack = [];
+    let pendingInput = null;
+    let draggedBeforeParts = null;
+    let historyMutation = Promise.resolve();
     const dropCaret = document.createElement('span');
     dropCaret.className = 'dogear-inline-drop-caret';
     dropCaret.contentEditable = 'false';
@@ -106,7 +110,12 @@
       return chip;
     }
 
-    async function setParts(parts) {
+    async function setParts(parts, preserveHistory = false) {
+      if (!preserveHistory) {
+        undoStack = [];
+        redoStack = [];
+        pendingInput = null;
+      }
       const version = ++partsRenderVersion;
       const nextObjectUrls = [];
       const fragment = document.createDocumentFragment();
@@ -129,6 +138,48 @@
 
     function getParts() {
       return childParts(root);
+    }
+
+    function snapshot(parts) {
+      return M.coalesceParts(parts).map((part) => ({ ...part }));
+    }
+
+    function sameParts(a, b) {
+      return JSON.stringify(a) === JSON.stringify(b);
+    }
+
+    function recordHistory(beforeParts, afterParts, kind) {
+      const before = snapshot(beforeParts);
+      const after = snapshot(afterParts);
+      if (sameParts(before, after)) return;
+      const now = Date.now();
+      const last = undoStack[undoStack.length - 1];
+      const groupable = ['insertText', 'deleteContentBackward', 'deleteContentForward'].includes(kind);
+      if (groupable && last?.kind === kind && now - last.at <= GROUP_WINDOW_MS) {
+        last.after = after;
+        last.at = now;
+      } else {
+        undoStack.push({ before, after, kind, at: now });
+        if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+      }
+      redoStack = [];
+    }
+
+    async function applyHistory(redo) {
+      const from = redo ? redoStack : undoStack;
+      if (!from.length) return false;
+      const action = from.pop();
+      const parts = redo ? action.after : action.before;
+      (redo ? undoStack : redoStack).push(action);
+      await setParts(parts, true);
+      root.focus();
+      await options.onChange?.(getParts(), 'history');
+      return true;
+    }
+
+    function queueHistory(redo) {
+      historyMutation = historyMutation.then(() => applyHistory(redo));
+      return historyMutation;
     }
 
     function clearDropCaret() {
@@ -180,6 +231,7 @@
     }
 
     async function addFilesNow(images, range) {
+      const before = getParts();
       let inserted = 0;
       for (const file of images) {
         if (options.maxFileSize && file.size > options.maxFileSize) {
@@ -198,7 +250,11 @@
       // Persist the complete batch before callers are allowed to start another
       // file mutation. Saving after each chip let partial-question garbage
       // collection delete a later image that had been stored but not referenced.
-      if (inserted) await options.onChange?.(getParts(), 'asset');
+      if (inserted) {
+        const after = getParts();
+        recordHistory(before, after, 'asset-add');
+        await options.onChange?.(after, 'asset');
+      }
     }
 
     function addFiles(files, range = lastRange) {
@@ -214,38 +270,34 @@
     root.addEventListener('keyup', rememberRange);
     root.addEventListener('mouseup', rememberRange);
     root.addEventListener('input', (event) => {
-      const reason = event.inputType === 'historyUndo' || event.inputType === 'historyRedo'
-        ? 'history'
-        : 'input';
-      if (reason === 'history') {
-        assetUndoReady = assetUndoStack.length > 0;
-      } else {
-        assetUndoReady = false;
-        assetRedoStack = [];
-      }
-      options.onChange?.(getParts(), reason);
+      const after = getParts();
+      if (pendingInput) recordHistory(pendingInput.before, after, pendingInput.kind);
+      pendingInput = null;
+      options.onChange?.(after, 'input');
     });
     root.addEventListener('blur', () => {
       fileMutation.then(() => options.onBlur?.(getParts()));
     });
     root.addEventListener('beforeinput', (event) => {
+      if (event.inputType === 'historyUndo' || event.inputType === 'historyRedo') {
+        const redo = event.inputType === 'historyRedo';
+        if ((redo ? redoStack : undoStack).length) {
+          event.preventDefault();
+          queueHistory(redo);
+        }
+        return;
+      }
+      pendingInput = { before: getParts(), kind: event.inputType || 'input' };
       if (event.inputType !== 'insertParagraph') return;
       event.preventDefault();
       document.execCommand('insertText', false, '\n');
     });
     root.addEventListener('keydown', async (event) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'z') return;
-      const stack = event.shiftKey ? assetRedoStack : assetUndoStack;
-      if (event.shiftKey ? !stack.length : !assetUndoReady || !stack.length) return;
+      const stack = event.shiftKey ? redoStack : undoStack;
+      if (!stack.length) return;
       event.preventDefault();
-      const action = stack.pop();
-      const parts = event.shiftKey ? action.after : action.before;
-      if (event.shiftKey) assetUndoStack.push(action);
-      else assetRedoStack.push(action);
-      await setParts(parts);
-      root.focus();
-      assetUndoReady = assetUndoStack.length > 0;
-      await options.onChange?.(getParts(), 'history');
+      await queueHistory(event.shiftKey);
     });
     root.addEventListener('click', async (event) => {
       const button = event.target.closest('.dogear-remove-asset');
@@ -256,9 +308,7 @@
       root.focus();
       chip.remove();
       const after = getParts();
-      assetUndoStack.push({ before, after });
-      assetRedoStack = [];
-      assetUndoReady = true;
+      recordHistory(before, after, 'asset-remove');
       // Match ordinary text editing: update the draft now and persist on blur.
       // Saving immediately can cause the host to rebuild this editor and erase
       // its local undo entry before the user presses Command/Ctrl+Z.
@@ -268,6 +318,7 @@
       const chip = event.target.closest?.('.dogear-asset-chip');
       if (!chip || !root.contains(chip)) return;
       draggedChip = chip;
+      draggedBeforeParts = getParts();
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('application/x-dogear-asset', chip.dataset.assetId);
     });
@@ -299,7 +350,10 @@
         clearDropCaret();
         placeCaretAfter(chip);
         lastRange = selectionRangeWithin(root);
-        await options.onChange?.(getParts(), 'asset');
+        const after = getParts();
+        recordHistory(draggedBeforeParts || after, after, 'asset-move');
+        draggedBeforeParts = null;
+        await options.onChange?.(after, 'asset');
         return;
       }
       if (!event.dataTransfer.files.length) return;
@@ -309,6 +363,7 @@
     });
     root.addEventListener('dragend', () => {
       draggedChip = null;
+      draggedBeforeParts = null;
       clearDropCaret();
     });
     root.addEventListener('paste', (event) => {
