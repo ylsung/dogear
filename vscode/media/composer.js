@@ -9,7 +9,14 @@
 
   function childParts(node) {
     const parts = [];
+    let previousWasBlock = false;
+    const appendNewline = () => {
+      const last = parts[parts.length - 1];
+      if (last?.type !== 'text' || !last.text.endsWith('\n')) parts.push(M.textPart('\n'));
+    };
     for (const child of node.childNodes) {
+      const isBlock = child.nodeType === Node.ELEMENT_NODE && /^(DIV|P)$/.test(child.tagName);
+      if (parts.length && (isBlock || previousWasBlock)) appendNewline();
       if (child.nodeType === Node.TEXT_NODE) {
         parts.push(M.textPart(child.data));
       } else if (child.nodeType === Node.ELEMENT_NODE) {
@@ -23,11 +30,9 @@
           parts.push(M.textPart('\n'));
         } else {
           parts.push(...childParts(child));
-          if (/^(DIV|P)$/.test(child.tagName) && child !== node.lastChild) {
-            parts.push(M.textPart('\n'));
-          }
         }
       }
+      previousWasBlock = isBlock;
     }
     return M.coalesceParts(parts);
   }
