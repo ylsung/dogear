@@ -75,6 +75,15 @@ export function messageText(message: UserMessage): string {
     .join('');
 }
 
+export function assetIdsOf(items: readonly QueueItem[]): string[] {
+  const ids = items.flatMap((item) =>
+    item.message.parts
+      .filter((part): part is AssetPart => part.type === 'asset')
+      .map((part) => part.assetId),
+  );
+  return [...new Set(ids)];
+}
+
 function normalizeItem(item: LegacyQueueItem): QueueItem {
   const parts = item.message?.parts?.length
     ? coalesceParts(item.message.parts)
