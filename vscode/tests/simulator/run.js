@@ -199,7 +199,24 @@ async function main() {
     assert.match(copied.prompt, /\[Image I1\]/);
     assert.match(copied.prompt, /Selected context: \[Image I1\]/);
 
-    console.log('PASS: multiline text, three images, stable queue editors, image context, and prompt labels');
+    await page.locator('.card[data-id="q2"] .dogear-remove-asset').last().click();
+    await page.waitForFunction(() => window.__hostMessages.some((message) =>
+      message.type === 'save' &&
+      message.queue.find((item) => item.id === 'q2')?.message.parts
+        .filter((part) => part.type === 'asset').length === 2));
+    await page.evaluate(({ queue, previews }) => window.dispatchEvent(new MessageEvent('message', {
+      data: { type: 'state', queue, assets: previews, promptLang: 'en', hotkeyHint: 'Ctrl+Alt+Q' },
+    })), { queue, previews });
+    await page.locator('#copy').click();
+    const copiedAfterStaleEcho = await page.evaluate(() =>
+      window.__hostMessages.filter((message) => message.type === 'copy').at(-1));
+    assert.deepEqual(copiedAfterStaleEcho.assetIds, ['asset-1', 'asset-2']);
+    assert.equal(
+      await page.locator('.card[data-id="q2"]').getAttribute('data-mount-marker'),
+      'stable',
+    );
+
+    console.log('PASS: multiline text, three images, stable queue echoes, image context, and prompt labels');
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

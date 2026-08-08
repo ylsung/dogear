@@ -56,7 +56,15 @@ window.addEventListener('message', (e) => {
   const msg = e.data;
   if (msg.type === 'state') {
     const structureChanged = queueStructure(queueCache) !== queueStructure(msg.queue);
-    queueCache = msg.queue;
+    if (structureChanged) {
+      queueCache = msg.queue;
+    } else {
+      const localMessages = new Map(queueCache.map((item) => [item.id, item.message]));
+      queueCache = msg.queue.map((item) => ({
+        ...item,
+        message: localMessages.get(item.id) || item.message,
+      }));
+    }
     assetPreviews = msg.assets || {};
     if (msg.promptLang && globalThis.DOGEAR_PROMPTS[msg.promptLang]) {
       promptLang = msg.promptLang;
