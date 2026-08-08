@@ -251,6 +251,10 @@ async function main() {
       handlesAreDraggable: [...document.querySelectorAll('.drag-handle')].every((element) => element.draggable),
       imageIsDraggable: document.querySelector('.context-images img')?.draggable === true,
       textIsSelectable: getComputedStyle(document.querySelector('blockquote')).userSelect === 'text',
+      inlineChipsAreThumbnailOnly: [...document.querySelectorAll('.dogear-asset-chip')]
+        .every((chip) => chip.children.length === 2 && !chip.querySelector(':scope > span')),
+      inlineChipShowsFullNameOnHover: [...document.querySelectorAll('.dogear-asset-chip')]
+        .every((chip) => chip.title === chip.dataset.label && chip.querySelector('img')?.title === chip.dataset.label),
     })`);
     if (Object.values(interactionState).some((value) => !value)) {
       throw new Error(`Queue interaction regression: ${JSON.stringify(interactionState)}`);
