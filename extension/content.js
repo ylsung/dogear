@@ -405,7 +405,7 @@
   let pendingCapture = null;
   let pendingCaptureAt = 0;
   let lastPoint = { x: 24, y: 24 };
-  const previewUrls = new Map();
+  const questionPreviewBlobs = new Map();
 
   function fileDataUrl(file) {
     return new Promise((resolve, reject) => {
@@ -419,20 +419,24 @@
   const composer = COMPOSER.create(questionEl, {
     maxFileSize: 15 * 1024 * 1024,
     storeFile: async (file) => {
-      const previewUrl = URL.createObjectURL(file);
       const response = await chrome.runtime.sendMessage({
         type: 'dogear-store-asset',
         dataUrl: await fileDataUrl(file),
         displayName: file.name || 'pasted-image.png',
       });
       if (!response?.ok) {
-        URL.revokeObjectURL(previewUrl);
         throw new Error(response?.error || 'Could not attach image.');
       }
-      previewUrls.set(response.asset.id, previewUrl);
+      // Keep the Blob, not a reusable object URL. The composer owns and revokes
+      // every URL it renders, so undo must create a fresh URL for the restored
+      // thumbnail instead of reusing one that has already been revoked.
+      questionPreviewBlobs.set(response.asset.id, file);
       return response.asset;
     },
-    resolveAssetUrl: async (id) => previewUrls.get(id) || '',
+    resolveAssetUrl: async (id) => {
+      const blob = questionPreviewBlobs.get(id);
+      return blob ? URL.createObjectURL(blob) : '';
+    },
     onError: toast,
   });
 
@@ -567,7 +571,6 @@
         viewport: { width: window.innerWidth, height: window.innerHeight },
       });
       if (!response?.ok) throw new Error(response?.error || 'Could not capture screenshot.');
-      previewUrls.set(response.asset.id, response.previewDataUrl);
       savedCapture = {
         kind: 'image',
         asset: response.asset,
