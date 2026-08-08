@@ -213,6 +213,21 @@ async function main() {
       'complete atomic rendering of three inline image chips',
     );
 
+    const internalFocus = await sideValue(sideClient, `(async () => {
+      const card = document.querySelectorAll('.card')[0];
+      card.dataset.simulatorIdentity = 'stable-card';
+      card.querySelector('.dogear-composer').focus();
+      card.querySelector('.tools button').focus();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return {
+        cardStayedMounted: document.querySelector('[data-simulator-identity="stable-card"]') === card,
+        imagesStayedVisible: card.querySelectorAll('.dogear-asset-chip').length === 3,
+      };
+    })()`);
+    if (Object.values(internalFocus).some((value) => !value)) {
+      throw new Error(`Internal card focus regression: ${JSON.stringify(internalFocus)}`);
+    }
+
     const batchPersistence = await sideValue(sideClient, `(async () => {
       const files = ['#10b981', '#8b5cf6', '#f97316'].map((color, index) => new File([
         '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="50"><rect width="80" height="50" fill="' + color + '"/></svg>',
@@ -231,6 +246,7 @@ async function main() {
       );
       await setQueue(queue);
       await collectGarbage(queue);
+      await liveComposers[0].setParts(queue[0].message.parts);
       return { added: added.length, allPersisted };
     })()`);
     if (batchPersistence.added !== 3 || !batchPersistence.allPersisted) {
@@ -388,6 +404,34 @@ async function main() {
       throw new Error(`Inline image undo regression: ${JSON.stringify(imageUndo)}`);
     }
 
+    const repeatedImageRemoval = await sideValue(sideClient, `(async () => {
+      const card = document.querySelectorAll('.card')[0];
+      card.dataset.repeatedRemovalIdentity = 'same-card';
+      const editor = card.querySelector('.dogear-composer');
+      const counts = [];
+      for (let remaining = 2; remaining >= 0; remaining -= 1) {
+        const button = editor.querySelector('.dogear-remove-asset');
+        button.focus();
+        button.click();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        counts.push(editor.querySelectorAll('.dogear-asset-chip').length);
+      }
+      for (let restored = 1; restored <= 3; restored += 1) {
+        editor.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true,
+        }));
+        await new Promise((resolve) => setTimeout(resolve, 180));
+      }
+      return {
+        everyRemovalWorkedFirstClick: JSON.stringify(counts) === JSON.stringify([2, 1, 0]),
+        threeImagesUndoRestored: editor.querySelectorAll('.dogear-asset-chip').length === 3,
+        cardDidNotFlashRebuild: document.querySelector('[data-repeated-removal-identity="same-card"]') === card,
+      };
+    })()`);
+    if (Object.values(repeatedImageRemoval).some((value) => !value)) {
+      throw new Error(`Repeated image removal regression: ${JSON.stringify(repeatedImageRemoval)}`);
+    }
+
     const editorHistory = await sideValue(sideClient, `(async () => {
       const editor = document.querySelector('.dogear-composer');
       const tokens = Array.from({ length: 6 }, (_, index) => '[H' + (index + 1) + ']');
@@ -415,11 +459,20 @@ async function main() {
         }));
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      const queue = await getQueue();
-      const savedText = DOGEAR_MODEL.textOf(queue[0].message.parts);
+      const draftText = DOGEAR_MODEL.textOf(liveComposers[0].getParts());
+      document.querySelector('#copy').focus();
+      let savedText = '';
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const queue = await getQueue();
+        savedText = DOGEAR_MODEL.textOf(queue[0].message.parts);
+        if (savedText.includes(tokens[0]) && tokens.slice(1).every((token) => !savedText.includes(token))) break;
+      }
       return {
-        fiveStepsUndone: tokens.slice(1).every((token) => !savedText.includes(token)),
-        oldestStepRemains: savedText.includes(tokens[0]),
+        fiveStepsUndone: tokens.slice(1).every((token) => !draftText.includes(token)),
+        oldestStepRemains: draftText.includes(tokens[0]),
+        fiveStepDraftPersistedOnBlur: savedText.includes(tokens[0]) &&
+          tokens.slice(1).every((token) => !savedText.includes(token)),
       };
     })()`);
     if (Object.values(editorHistory).some((value) => !value)) {
@@ -434,6 +487,48 @@ async function main() {
           shadow.querySelector('.excerpt')?.textContent.includes('no selection');
       }),
       'whole-page question popover',
+    );
+    await page.evaluate(() => {
+      const shadow = document.querySelector('#dogear-host').shadowRoot;
+      const input = shadow.querySelector('.image-input');
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([
+        '<svg xmlns="http://www.w3.org/2000/svg" width="90" height="60"><rect width="90" height="60" fill="#06b6d4"/></svg>',
+      ], 'undo-preview.svg', { type: 'image/svg+xml' }));
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files').set;
+      setter.call(input, transfer.files);
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await waitFor(
+      () => page.evaluate(() => {
+        const image = document.querySelector('#dogear-host').shadowRoot.querySelector('.dogear-asset-chip img');
+        return image?.complete && image.naturalWidth > 0;
+      }),
+      'initial on-page attachment thumbnail',
+    );
+    await page.evaluate(() => {
+      const shadow = document.querySelector('#dogear-host').shadowRoot;
+      const editor = shadow.querySelector('.question');
+      shadow.querySelector('.dogear-remove-asset').click();
+      editor.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true,
+      }));
+    });
+    const onPageUndoThumbnailRestored = await waitFor(
+      () => page.evaluate(() => {
+        const image = document.querySelector('#dogear-host').shadowRoot.querySelector('.dogear-asset-chip img');
+        return image?.complete && image.naturalWidth > 0;
+      }),
+      'fresh thumbnail after on-page image undo',
+    );
+    await page.evaluate(() => {
+      document.querySelector('#dogear-host').shadowRoot.querySelector('.close').click();
+    });
+    await sideValue(sideClient, `document.querySelector('#ask-page').click()`);
+    await waitFor(
+      () => page.evaluate(() => document.querySelector('#dogear-host')?.shadowRoot
+        ?.querySelector('.popover')?.style.display === 'block'),
+      'reopened whole-page question popover',
     );
     await page.evaluate(() => {
       const shadow = document.querySelector('#dogear-host').shadowRoot;
@@ -484,11 +579,14 @@ async function main() {
       handoffRows: 3,
       visibleQueries: 4,
       ...interactionState,
+      ...internalFocus,
       batchImagesPersisted: batchPersistence.allPersisted,
       ...inlineReorder,
       ...imageUndo,
+      ...repeatedImageRemoval,
       ...editorHistory,
       ...questionHistory,
+      onPageUndoThumbnailRestored,
       askPage: true,
     });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);
