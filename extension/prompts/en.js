@@ -5,7 +5,7 @@ globalThis.DOGEAR_PROMPTS['en'] = {
 
   // Opening instruction; n = number of queries.
   header: (n) =>
-    `I have several questions, each anchored to a source and selected text or images. ` +
+    `I have several questions, each associated with a source and sometimes selected text or images. ` +
     `Please address each one under its own numbered header ([Q1], [Q2], …).`,
 
   // One line introducing each source document. letter = A, B, C…
