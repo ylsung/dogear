@@ -16,6 +16,10 @@
         "title": "Dogear: Add query for selection"
       },
       {
+        "command": "dogear.askImage",
+        "title": "Dogear: Add query for image"
+      },
+      {
         "command": "dogear.askCodexSelection",
         "title": "Dogear: Add selected Codex text"
       },
@@ -47,6 +51,20 @@
         {
           "command": "dogear.askSelection",
           "when": "editorHasSelection",
+          "group": "dogear"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "dogear.askImage",
+          "when": "resourceExtname =~ /\\.(png|jpe?g|gif|webp|bmp|svg)$/i",
+          "group": "dogear"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "dogear.askImage",
+          "when": "resourceExtname =~ /\\.(png|jpe?g|gif|webp|bmp|svg)$/i",
           "group": "dogear"
         }
       ],

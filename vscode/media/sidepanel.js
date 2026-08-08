@@ -325,7 +325,7 @@ async function render() {
       });
       const icon = document.createElement('span');
       icon.className = 'favicon';
-      icon.textContent = '📄';
+      icon.textContent = item.surface === 'image' ? '🖼️' : '📄';
       const label = document.createElement('span');
       label.textContent = item.title;
       src.append(icon, label);
@@ -362,10 +362,25 @@ async function render() {
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = `Q${idx + 1}`;
-    const quote = document.createElement('blockquote');
-    quote.textContent = truncate(item.anchor.exact, 220);
-    quote.title = item.anchor.exact;
-    top.append(num, quote);
+    const contextAssets = (item.selectedContext || []).filter((part) => part.type === 'asset');
+    if (contextAssets.length) {
+      const images = document.createElement('div');
+      images.className = 'context-images';
+      contextAssets.forEach((part) => {
+        const image = document.createElement('img');
+        image.src = assetPreviews[part.assetId] || '';
+        image.alt = part.label || 'Selected image';
+        image.title = part.label || 'Selected image';
+        images.appendChild(image);
+      });
+      top.append(num, images);
+    } else {
+      const quote = document.createElement('blockquote');
+      const selectedText = renderParts(item.selectedContext, new Map()) || item.anchor.exact;
+      quote.textContent = truncate(selectedText, 220);
+      quote.title = selectedText;
+      top.append(num, quote);
+    }
 
     const q = document.createElement('div');
     q.dataset.placeholder = 'Your query about this selection…';
@@ -490,7 +505,10 @@ function safeFilename(name) {
 }
 
 function buildAssetPlan(queue) {
-  const parts = queue.flatMap((item) => item.message?.parts || []);
+  const parts = queue.flatMap((item) => [
+    ...(item.selectedContext || []),
+    ...(item.message?.parts || []),
+  ]);
   const seen = new Set();
   return parts.flatMap((part) => {
     if (part.type !== 'asset' || seen.has(part.assetId)) return [];
@@ -532,7 +550,12 @@ function composePrompt(queue, assets) {
       : item.lines && P.lines
         ? P.lines(item.lines.start, item.lines.end)
         : '';
-    lines.push('', P.excerpt(idx + 1, where, item.anchor.exact));
+    const contextParts = item.selectedContext || [];
+    const contextText = renderParts(contextParts, labels);
+    const hasContextImage = contextParts.some((part) => part.type === 'asset');
+    lines.push('', hasContextImage
+      ? P.multimodalSelection(idx + 1, where, contextText)
+      : P.excerpt(idx + 1, where, contextText || item.anchor.exact));
     if (item.anchor.prefix || item.anchor.suffix) {
       lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
     }
