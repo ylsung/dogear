@@ -56,6 +56,9 @@
     let draggedChip = null;
     let fileMutation = Promise.resolve();
     let partsRenderVersion = 0;
+    let assetUndoStack = [];
+    let assetRedoStack = [];
+    let assetUndoReady = false;
     const dropCaret = document.createElement('span');
     dropCaret.className = 'dogear-inline-drop-caret';
     dropCaret.contentEditable = 'false';
@@ -210,7 +213,18 @@
     root.addEventListener('selectionchange', rememberRange);
     root.addEventListener('keyup', rememberRange);
     root.addEventListener('mouseup', rememberRange);
-    root.addEventListener('input', () => options.onChange?.(getParts(), 'input'));
+    root.addEventListener('input', (event) => {
+      const reason = event.inputType === 'historyUndo' || event.inputType === 'historyRedo'
+        ? 'history'
+        : 'input';
+      if (reason === 'history') {
+        assetUndoReady = assetUndoStack.length > 0;
+      } else {
+        assetUndoReady = false;
+        assetRedoStack = [];
+      }
+      options.onChange?.(getParts(), reason);
+    });
     root.addEventListener('blur', () => {
       fileMutation.then(() => options.onBlur?.(getParts()));
     });
@@ -219,12 +233,36 @@
       event.preventDefault();
       document.execCommand('insertText', false, '\n');
     });
+    root.addEventListener('keydown', async (event) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'z') return;
+      const stack = event.shiftKey ? assetRedoStack : assetUndoStack;
+      if (event.shiftKey ? !stack.length : !assetUndoReady || !stack.length) return;
+      event.preventDefault();
+      const action = stack.pop();
+      const parts = event.shiftKey ? action.after : action.before;
+      if (event.shiftKey) assetUndoStack.push(action);
+      else assetRedoStack.push(action);
+      await setParts(parts);
+      root.focus();
+      assetUndoReady = assetUndoStack.length > 0;
+      await options.onChange?.(getParts(), 'history');
+    });
     root.addEventListener('click', async (event) => {
       const button = event.target.closest('.dogear-remove-asset');
       if (!button) return;
       event.preventDefault();
-      button.closest('.dogear-asset-chip').remove();
-      await options.onChange?.(getParts(), 'asset');
+      const chip = button.closest('.dogear-asset-chip');
+      const before = getParts();
+      root.focus();
+      chip.remove();
+      const after = getParts();
+      assetUndoStack.push({ before, after });
+      assetRedoStack = [];
+      assetUndoReady = true;
+      // Match ordinary text editing: update the draft now and persist on blur.
+      // Saving immediately can cause the host to rebuild this editor and erase
+      // its local undo entry before the user presses Command/Ctrl+Z.
+      options.onChange?.(after, 'input');
     });
     root.addEventListener('dragstart', (event) => {
       const chip = event.target.closest?.('.dogear-asset-chip');
@@ -286,6 +324,7 @@
       destroy: () => {
         partsRenderVersion += 1;
         revokeObjectUrls();
+        options.onDestroy?.();
       },
       focus: () => root.focus(),
       getParts,
