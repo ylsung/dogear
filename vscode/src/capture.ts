@@ -1,4 +1,8 @@
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
+import { execFile } from 'child_process';
+import * as os from 'os';
+import * as path from 'path';
 import { AssetStore } from './assets';
 import { assetIdsOf, QueueItem, QueueStore, UserMessage } from './queue';
 
@@ -84,18 +88,19 @@ export async function askWebviewSelection(
 
 export async function askSelection(
   store: QueueStore,
+  assets: AssetStore,
   composer: QuestionComposer,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
-    vscode.window.showInformationMessage('Dogear: open a file and select some text first.');
+    await askScreenshotSelection(store, assets, composer);
     return;
   }
   const sel = editor.selection;
   const doc = editor.document;
   const exact = doc.getText(sel);
   if (!exact.trim()) {
-    vscode.window.showInformationMessage('Dogear: select some text first.');
+    await askScreenshotSelection(store, assets, composer);
     return;
   }
 
@@ -128,6 +133,83 @@ export async function askSelection(
   };
 
   await store.add(item);
+}
+
+function captureMacRegion(destination: vscode.Uri): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      '/usr/sbin/screencapture',
+      ['-i', '-s', '-x', destination.fsPath],
+      (error) => resolve(!error),
+    );
+  });
+}
+
+function screenshotName(): string {
+  return `dogear-screenshot-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+}
+
+export async function askScreenshotSelection(
+  store: QueueStore,
+  assets: AssetStore,
+  composer: QuestionComposer,
+): Promise<void> {
+  // VS Code has no public region-capture API. A native capture is only safe
+  // when the extension host is running locally on macOS; remote hosts cannot
+  // see the user's desktop.
+  if (process.platform !== 'darwin' || vscode.env.remoteName) {
+    vscode.window.showInformationMessage(
+      'Dogear: screen-region capture is only available in a local macOS window. Choose an existing screenshot instead.',
+    );
+    await askImageSelection(store, assets, composer);
+    return;
+  }
+
+  const name = screenshotName();
+  const destination = vscode.Uri.file(
+    path.join(os.tmpdir(), `${crypto.randomUUID()}-${name}`),
+  );
+  try {
+    if (!await captureMacRegion(destination)) return;
+    try {
+      const stat = await vscode.workspace.fs.stat(destination);
+      if (!stat.size) return;
+    } catch {
+      return;
+    }
+
+    const asset = await assets.putUri(destination);
+    const message = await composer.compose('Screenshot selection');
+    if (!message) {
+      await assets.removeUnreferenced(assetIdsOf(store.get()));
+      return;
+    }
+    const storedUri = assets.uri(asset);
+    await store.add({
+      id: itemId(),
+      url: storedUri?.toString() || destination.toString(),
+      title: 'Screenshot selection',
+      selectedContext: [{
+        type: 'asset',
+        assetId: asset.id,
+        mediaType: asset.mediaType,
+        label: name,
+      }],
+      message,
+      page: null,
+      lines: null,
+      languageId: 'image',
+      surface: 'image',
+      createdAt: Date.now(),
+      anchor: { exact: '', prefix: '', suffix: '', start: 0, end: 0 },
+    });
+  } finally {
+    try {
+      await vscode.workspace.fs.delete(destination);
+    } catch {
+      // Cancellation and failed captures normally leave no temporary file.
+    }
+  }
 }
 
 export async function askImageSelection(

@@ -3,6 +3,7 @@ import { QueueStore } from './queue';
 import {
   askSelection,
   askImageSelection,
+  askScreenshotSelection,
   askWebviewSelection,
 } from './capture';
 import { Decorations } from './decorations';
@@ -19,7 +20,10 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider(DogearPanel.viewId, panel, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
-    vscode.commands.registerCommand('dogear.askSelection', () => askSelection(store, panel)),
+    vscode.commands.registerCommand('dogear.askSelection', () => askSelection(store, assets, panel)),
+    vscode.commands.registerCommand('dogear.captureScreenshot', () =>
+      askScreenshotSelection(store, assets, panel),
+    ),
     vscode.commands.registerCommand('dogear.askImage', (uri?: vscode.Uri) =>
       askImageSelection(store, assets, panel, uri),
     ),
