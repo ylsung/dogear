@@ -388,6 +388,44 @@ async function main() {
       throw new Error(`Inline image undo regression: ${JSON.stringify(imageUndo)}`);
     }
 
+    const editorHistory = await sideValue(sideClient, `(async () => {
+      const editor = document.querySelector('.dogear-composer');
+      const tokens = Array.from({ length: 6 }, (_, index) => '[H' + (index + 1) + ']');
+      for (const token of tokens) {
+        editor.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertFromPaste',
+          data: token,
+        }));
+        editor.appendChild(document.createTextNode(token));
+        editor.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertFromPaste',
+          data: token,
+        }));
+      }
+      for (let index = 0; index < 5; index += 1) {
+        editor.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'z',
+          code: 'KeyZ',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }));
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      const queue = await getQueue();
+      const savedText = DOGEAR_MODEL.textOf(queue[0].message.parts);
+      return {
+        fiveStepsUndone: tokens.slice(1).every((token) => !savedText.includes(token)),
+        oldestStepRemains: savedText.includes(tokens[0]),
+      };
+    })()`);
+    if (Object.values(editorHistory).some((value) => !value)) {
+      throw new Error(`Five-step editor history regression: ${JSON.stringify(editorHistory)}`);
+    }
+
     await sideValue(sideClient, `document.querySelector('#ask-page').click()`);
     await waitFor(
       () => page.evaluate(() => {
@@ -411,6 +449,36 @@ async function main() {
       })()`),
       'whole-page question in the visible queue',
     );
+
+    const originalQuestionIds = await sideValue(sideClient, `(async () => (await getQueue()).map((item) => item.id))()`);
+    for (let remaining = 4; remaining > 0; remaining -= 1) {
+      await sideValue(sideClient, `document.querySelectorAll('.card')[${remaining - 1}].querySelector('.tools button:last-child').click()`);
+      await waitFor(
+        () => sideValue(sideClient, `document.querySelectorAll('.card').length === ${remaining - 1}`),
+        `question deletion leaving ${remaining - 1} cards`,
+      );
+    }
+    const deletedQuestionAssetsRetained = await sideValue(sideClient, `(async () => {
+      const records = await Promise.all(${JSON.stringify(seededAssets)}.map((asset) => ASSETS.get(asset.id)));
+      return records.every(Boolean);
+    })()`);
+    for (let restored = 1; restored <= 4; restored += 1) {
+      await sideValue(sideClient, `document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true,
+      }))`);
+      await waitFor(
+        () => sideValue(sideClient, `document.querySelectorAll('.card').length === ${restored}`),
+        `question undo restoring ${restored} cards`,
+      );
+    }
+    const restoredQuestionIds = await sideValue(sideClient, `(async () => (await getQueue()).map((item) => item.id))()`);
+    const questionHistory = {
+      fourQuestionsRestored: JSON.stringify(restoredQuestionIds) === JSON.stringify(originalQuestionIds),
+      deletedQuestionAssetsRetained,
+    };
+    if (Object.values(questionHistory).some((value) => !value)) {
+      throw new Error(`Question deletion history regression: ${JSON.stringify(questionHistory)}`);
+    }
     report.push({
       label: 'Queue synchronization and content interaction',
       handoffRows: 3,
@@ -419,6 +487,8 @@ async function main() {
       batchImagesPersisted: batchPersistence.allPersisted,
       ...inlineReorder,
       ...imageUndo,
+      ...editorHistory,
+      ...questionHistory,
       askPage: true,
     });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);
