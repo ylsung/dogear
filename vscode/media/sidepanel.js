@@ -63,6 +63,7 @@ window.addEventListener('message', (e) => {
       langSelect.value = promptLang;
     }
     document.getElementById('hotkey').textContent = msg.hotkeyHint;
+    document.getElementById('save-images').hidden = !buildAssetPlan(queueCache).length;
     if (structureChanged || !listEl.querySelector('.group')) render();
   } else if (msg.type === 'response') {
     const pending = pendingRequests.get(msg.requestId);
@@ -177,20 +178,6 @@ document.getElementById('capture-editor').addEventListener('keydown', (event) =>
 
 function truncate(s, n) {
   return s.length > n ? `${s.slice(0, n)}…` : s;
-}
-
-function messageText(item) {
-  return (item.message?.parts || [])
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text || '')
-    .join('');
-}
-
-function replaceMessageText(item, text) {
-  item.message = {
-    role: 'user',
-    parts: text ? [{ type: 'text', text }] : [],
-  };
 }
 
 // ---------- selection & drag state ----------
@@ -496,9 +483,37 @@ function sourceCitation(item, P) {
   return { title: item.title, url: P.localFile || 'local file' };
 }
 
-function composePrompt(queue) {
+function safeFilename(name) {
+  return String(name || 'image')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')
+    .replace(/^\.+/, '') || 'image';
+}
+
+function buildAssetPlan(queue) {
+  const parts = queue.flatMap((item) => item.message?.parts || []);
+  const seen = new Set();
+  return parts.flatMap((part) => {
+    if (part.type !== 'asset' || seen.has(part.assetId)) return [];
+    seen.add(part.assetId);
+    const index = seen.size;
+    return [{
+      id: part.assetId,
+      label: `Image I${index}`,
+      deliveredName: `I${index}-${safeFilename(part.label)}`,
+    }];
+  });
+}
+
+function renderParts(parts, labels) {
+  return (parts || []).map((part) =>
+    part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
+  ).join('');
+}
+
+function composePrompt(queue, assets) {
   const P = globalThis.DOGEAR_PROMPTS[promptLang] || globalThis.DOGEAR_PROMPTS.en;
   const lines = [P.header(queue.length)];
+  const labels = new Map(assets.map((asset) => [asset.id, asset.label]));
 
   let lastUrl = null;
   let sourceIdx = 0;
@@ -521,8 +536,13 @@ function composePrompt(queue) {
     if (item.anchor.prefix || item.anchor.suffix) {
       lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
     }
-    lines.push(P.question(messageText(item)));
+    lines.push(P.question(renderParts(item.message?.parts, labels)));
   });
+
+  if (assets.length) {
+    lines.push('', P.attachmentsHeader);
+    assets.forEach((asset) => lines.push(P.attachment(asset.label, asset.deliveredName)));
+  }
 
   return lines.join('\n');
 }
@@ -536,7 +556,8 @@ async function composeOrWarn() {
   if (queue.length > SOFT_CAP) {
     note(`Heads up: ${queue.length} queries in one prompt may dilute answer quality.`);
   }
-  return composePrompt(queue);
+  const assets = buildAssetPlan(queue);
+  return { text: composePrompt(queue, assets), assets };
 }
 
 // ---------- delivery ----------
@@ -546,19 +567,39 @@ async function composeOrWarn() {
 document.getElementById('copy').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  vscodeApi.postMessage({ type: 'copy', prompt });
+  vscodeApi.postMessage({
+    type: 'copy',
+    prompt: prompt.text,
+    assetIds: prompt.assets.map((asset) => asset.id),
+  });
 });
 
 document.getElementById('to-claude').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  vscodeApi.postMessage({ type: 'send', target: 'claude', prompt });
+  vscodeApi.postMessage({
+    type: 'send',
+    target: 'claude',
+    prompt: prompt.text,
+    assetIds: prompt.assets.map((asset) => asset.id),
+  });
 });
 
 document.getElementById('to-codex').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  vscodeApi.postMessage({ type: 'send', target: 'codex', prompt });
+  vscodeApi.postMessage({
+    type: 'send',
+    target: 'codex',
+    prompt: prompt.text,
+    assetIds: prompt.assets.map((asset) => asset.id),
+  });
+});
+
+document.getElementById('save-images').addEventListener('click', async () => {
+  const assets = buildAssetPlan(await getQueue());
+  if (!assets.length) return;
+  vscodeApi.postMessage({ type: 'saveAssets', assetIds: assets.map((asset) => asset.id) });
 });
 
 document.getElementById('clear').addEventListener('click', () => {
