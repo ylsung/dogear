@@ -68,6 +68,20 @@ function truncate(s, n) {
   return s.length > n ? `${s.slice(0, n)}…` : s;
 }
 
+function messageText(item) {
+  return (item.message?.parts || [])
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text || '')
+    .join('');
+}
+
+function replaceMessageText(item, text) {
+  item.message = {
+    role: 'user',
+    parts: text ? [{ type: 'text', text }] : [],
+  };
+}
+
 // ---------- selection & drag state ----------
 
 let selectedIds = new Set();
@@ -259,12 +273,12 @@ async function render() {
 
     const q = document.createElement('textarea');
     q.placeholder = 'Your query about this selection…';
-    q.value = item.question;
+    q.value = messageText(item);
     q.addEventListener('change', async () => {
       const queueNow = await getQueue();
       const target = queueNow.find((x) => x.id === item.id);
       if (target) {
-        target.question = q.value.trim();
+        replaceMessageText(target, q.value.trim());
         await setQueue(queueNow);
       }
     });
@@ -355,7 +369,7 @@ function composePrompt(queue) {
     if (item.anchor.prefix || item.anchor.suffix) {
       lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
     }
-    lines.push(P.question(item.question));
+    lines.push(P.question(messageText(item)));
   });
 
   return lines.join('\n');
