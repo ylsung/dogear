@@ -147,6 +147,16 @@ kbd {
   cursor: grab;
 }
 .dogear-asset-chip:active { cursor: grabbing; }
+.dogear-inline-drop-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.35em;
+  margin: 0 1px;
+  border-radius: 1px;
+  background: var(--primary);
+  vertical-align: text-bottom;
+  pointer-events: none;
+}
 .dogear-asset-chip img {
   width: 22px;
   height: 22px;

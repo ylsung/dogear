@@ -56,6 +56,10 @@
     let draggedChip = null;
     let fileMutation = Promise.resolve();
     let partsRenderVersion = 0;
+    const dropCaret = document.createElement('span');
+    dropCaret.className = 'dogear-inline-drop-caret';
+    dropCaret.contentEditable = 'false';
+    dropCaret.setAttribute('aria-hidden', 'true');
 
     function revokeObjectUrls() {
       objectUrls.forEach((url) => URL.revokeObjectURL(url));
@@ -121,6 +125,37 @@
 
     function getParts() {
       return childParts(root);
+    }
+
+    function clearDropCaret() {
+      dropCaret.remove();
+    }
+
+    function placeDropCaret(event) {
+      clearDropCaret();
+      const targetChip = event.target.closest?.('.dogear-asset-chip');
+      if (targetChip && root.contains(targetChip)) {
+        const rect = targetChip.getBoundingClientRect();
+        const before = event.clientX < rect.left + rect.width / 2;
+        targetChip.parentNode.insertBefore(dropCaret, before ? targetChip : targetChip.nextSibling);
+        return true;
+      }
+      const range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+      if (range && root.contains(range.commonAncestorContainer)) {
+        const containingChip = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+          ? range.commonAncestorContainer.closest?.('.dogear-asset-chip')
+          : range.commonAncestorContainer.parentElement?.closest?.('.dogear-asset-chip');
+        if (containingChip) {
+          const rect = containingChip.getBoundingClientRect();
+          const before = event.clientX < rect.left + rect.width / 2;
+          containingChip.parentNode.insertBefore(dropCaret, before ? containingChip : containingChip.nextSibling);
+        } else {
+          range.insertNode(dropCaret);
+        }
+        return true;
+      }
+      root.appendChild(dropCaret);
+      return true;
     }
 
     function rememberRange() {
@@ -201,6 +236,7 @@
       if (draggedChip) {
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
+        placeDropCaret(event);
         return;
       }
       if ([...event.dataTransfer.items].some((item) => item.kind === 'file')) {
@@ -209,18 +245,19 @@
         root.classList.add('dogear-drop-active');
       }
     });
-    root.addEventListener('dragleave', () => root.classList.remove('dogear-drop-active'));
+    root.addEventListener('dragleave', (event) => {
+      root.classList.remove('dogear-drop-active');
+      if (draggedChip && !root.contains(event.relatedTarget)) clearDropCaret();
+    });
     root.addEventListener('drop', async (event) => {
       root.classList.remove('dogear-drop-active');
       if (draggedChip) {
         event.preventDefault();
         const chip = draggedChip;
         draggedChip = null;
-        const range = document.caretRangeFromPoint?.(event.clientX, event.clientY) || lastRange;
-        if (!range || !root.contains(range.commonAncestorContainer) || chip.contains(range.commonAncestorContainer)) {
-          return;
-        }
-        range.insertNode(chip);
+        if (!dropCaret.isConnected) placeDropCaret(event);
+        dropCaret.before(chip);
+        clearDropCaret();
         placeCaretAfter(chip);
         lastRange = selectionRangeWithin(root);
         await options.onChange?.(getParts(), 'asset');
@@ -233,6 +270,7 @@
     });
     root.addEventListener('dragend', () => {
       draggedChip = null;
+      clearDropCaret();
     });
     root.addEventListener('paste', (event) => {
       const files = [...event.clipboardData.files].filter((file) => file.type.startsWith('image/'));
