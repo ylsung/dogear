@@ -105,7 +105,7 @@ kbd {
   max-height: 54px;
   overflow: hidden;
 }
-.card textarea {
+.card .dogear-composer {
   width: 100%;
   margin-top: 6px;
   border: 1px solid var(--border);
@@ -116,9 +116,53 @@ kbd {
   min-height: 34px;
   background: var(--panel);
   color: var(--text);
+  white-space: pre-wrap;
+  cursor: text;
+  overflow-wrap: anywhere;
 }
-.card textarea:focus { outline: none; border-color: var(--primary); }
-.card textarea::placeholder { color: var(--textFaint); }
+.card .dogear-composer:focus { outline: none; border-color: var(--primary); }
+.card .dogear-composer:empty::before {
+  content: attr(data-placeholder);
+  color: var(--textFaint);
+  pointer-events: none;
+}
+.dogear-asset-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  gap: 4px;
+  margin: 1px 3px;
+  padding: 2px 4px;
+  border: 1px solid var(--borderStrong);
+  border-radius: 5px;
+  background: var(--groupBg);
+  vertical-align: middle;
+  color: var(--textMuted);
+  font-size: 11px;
+}
+.dogear-asset-chip img {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+.dogear-asset-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dogear-remove-asset {
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  color: var(--textFaint);
+  cursor: pointer;
+}
+.dogear-drop-active { box-shadow: inset 0 0 0 2px var(--primary); }
+.context-images { display: flex; gap: 5px; flex-wrap: wrap; flex: 1; }
+.context-images img {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
 .card .tools { display: flex; gap: 4px; justify-content: flex-end; margin-top: 5px; }
 .card .tools button {
   border: 1px solid var(--border);

@@ -28,15 +28,26 @@ const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
 const countEl = document.getElementById('count');
 const noteEl = document.getElementById('note');
+const M = globalThis.DOGEAR_MODEL;
+const ASSETS = globalThis.DOGEAR_ASSETS;
+const COMPOSER = globalThis.DOGEAR_COMPOSER;
+const liveObjectUrls = [];
+const liveComposers = [];
+let quietQueueWrites = 0;
 
 const SOFT_CAP = 10;
 
 async function getQueue() {
   const { queue = [] } = await chrome.storage.local.get('queue');
-  return queue;
+  return queue.map(M.normalizeItem);
 }
 
 async function setQueue(queue) {
+  await chrome.storage.local.set({ queue });
+}
+
+async function setQueueQuietly(queue) {
+  quietQueueWrites += 1;
   await chrome.storage.local.set({ queue });
 }
 
@@ -74,17 +85,18 @@ function isSafeUrl(url) {
 }
 
 function sourceDestination(item) {
-  if (item.viewUrl && isSafeUrl(item.viewUrl)) return item.viewUrl;
-  if (!isSafeUrl(item.url)) return '#';
-  if (looksLikePdf(item.url)) return viewerLink(item.url);
-  return item.url;
+  const source = M.sourceOf(item);
+  if (source.viewUrl && isSafeUrl(source.viewUrl)) return source.viewUrl;
+  if (!isSafeUrl(source.url)) return '#';
+  if (looksLikePdf(source.url)) return viewerLink(source.url);
+  return source.url;
 }
 
 // Focus the already-open tab for a source if there is one; open it otherwise.
 async function openSource(item) {
   const dest = sourceDestination(item);
   if (dest === '#') return;
-  const targets = [dest, item.url].map((x) => x.split('#')[0]);
+  const targets = [dest, M.sourceOf(item).url].map((x) => x.split('#')[0]);
   const tabs = await chrome.tabs.query({});
   const tab = tabs.find((t) => t.url && targets.includes(t.url.split('#')[0]));
   if (tab) {
@@ -196,6 +208,8 @@ async function dropSelectedAt(targetId, before) {
 }
 
 async function render() {
+  liveObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+  liveComposers.splice(0).forEach((composer) => composer.destroy());
   const queue = await getQueue();
   countEl.textContent = queue.length
     ? `${queue.length} ${queue.length > 1 ? 'queries' : 'query'}`
@@ -207,7 +221,9 @@ async function render() {
   let group = null;
   groupBlocks = [];
   queue.forEach((item, idx) => {
-    if (item.url !== lastUrl) {
+    const sourceInfo = M.sourceOf(item);
+    const locator = M.locatorOf(item);
+    if (sourceInfo.url !== lastUrl) {
       group = document.createElement('div');
       group.className = 'group';
       const groupIdx = groupBlocks.length;
@@ -222,7 +238,7 @@ async function render() {
       });
       const src = document.createElement('a');
       src.className = 'source';
-      src.title = item.url;
+      src.title = sourceInfo.url;
       src.href = sourceDestination(item);
       src.draggable = false; // links drag natively and would hijack group drags
       src.addEventListener('click', (e) => {
@@ -231,14 +247,14 @@ async function render() {
       });
       const icon = document.createElement('img');
       icon.className = 'favicon';
-      icon.src = faviconUrl(item.url);
+      icon.src = faviconUrl(sourceInfo.url);
       icon.draggable = false;
       const label = document.createElement('span');
-      label.textContent = item.title;
+      label.textContent = sourceInfo.title;
       src.append(icon, label);
       group.appendChild(src);
       listEl.appendChild(group);
-      lastUrl = item.url;
+      lastUrl = sourceInfo.url;
     }
     groupBlocks[groupBlocks.length - 1].push(item.id);
 
@@ -249,7 +265,7 @@ async function render() {
     if (selectedIds.has(item.id)) card.classList.add('selected');
 
     card.addEventListener('click', async (e) => {
-      if (e.target.closest('textarea, button')) return;
+      if (e.target.closest('.dogear-composer, textarea, input, button')) return;
       if (e.shiftKey && lastAnchorId) {
         await selectRange(lastAnchorId, item.id);
       } else if (e.metaKey || e.ctrlKey) {
@@ -265,6 +281,10 @@ async function render() {
     });
 
     card.addEventListener('dragstart', (e) => {
+      if (e.target.closest('.dogear-composer, input, button')) {
+        e.preventDefault();
+        return;
+      }
       e.stopPropagation(); // don't also start the enclosing group's drag
       dragMode = 'card';
       if (!selectedIds.has(item.id)) {
@@ -280,21 +300,74 @@ async function render() {
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = `Q${idx + 1}`;
-    const quote = document.createElement('blockquote');
-    quote.textContent = truncate(item.anchor.exact, 220);
-    quote.title = item.anchor.exact;
-    top.append(num, quote);
+    const contextText = M.textOf(item.selectedContext.flatMap((context) => context.parts));
+    if (contextText) {
+      const quote = document.createElement('blockquote');
+      quote.textContent = truncate(contextText, 220);
+      quote.title = contextText;
+      top.append(num, quote);
+    } else {
+      const images = document.createElement('div');
+      images.className = 'context-images';
+      top.append(num, images);
+      for (const part of item.selectedContext.flatMap((context) => context.parts)) {
+        if (part.type !== 'asset') continue;
+        ASSETS.get(part.assetId).then((record) => {
+          if (!record || !images.isConnected) return;
+          const url = URL.createObjectURL(record.blob);
+          liveObjectUrls.push(url);
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = part.label || 'Selected image';
+          img.title = img.alt;
+          images.appendChild(img);
+        });
+      }
+    }
 
-    const q = document.createElement('textarea');
-    q.placeholder = 'Your query about this selection…';
-    q.value = item.question;
-    q.addEventListener('change', async () => {
+    const q = document.createElement('div');
+    q.dataset.placeholder = 'Type a question, paste an image, or drop one here…';
+    let draftParts = item.message.parts;
+    const saveDraft = async (parts) => {
       const queueNow = await getQueue();
       const target = queueNow.find((x) => x.id === item.id);
       if (target) {
-        target.question = q.value.trim();
-        await setQueue(queueNow);
+        target.message = { role: 'user', parts: M.coalesceParts(parts) };
+        await setQueueQuietly(queueNow);
       }
+    };
+    const composer = COMPOSER.create(q, {
+      parts: item.message.parts,
+      maxFileSize: 15 * 1024 * 1024,
+      storeFile: (file) => ASSETS.put(file, {
+        mimeType: file.type,
+        displayName: file.name || 'pasted-image.png',
+        origin: { type: 'question-input' },
+      }),
+      resolveAssetUrl: async (id) => {
+        const record = await ASSETS.get(id);
+        if (!record) return '';
+        const url = URL.createObjectURL(record.blob);
+        liveObjectUrls.push(url);
+        return url;
+      },
+      onChange: (parts, reason) => {
+        draftParts = parts;
+        if (reason === 'asset') saveDraft(parts);
+      },
+      onBlur: () => saveDraft(draftParts),
+      onError: note,
+    });
+    liveComposers.push(composer);
+
+    const attachInput = document.createElement('input');
+    attachInput.type = 'file';
+    attachInput.accept = 'image/*';
+    attachInput.multiple = true;
+    attachInput.hidden = true;
+    attachInput.addEventListener('change', () => {
+      composer.addFiles(attachInput.files);
+      attachInput.value = '';
     });
 
     const tools = document.createElement('div');
@@ -307,12 +380,13 @@ async function render() {
       return b;
     };
     tools.append(
+      mk('＋ Image', 'Attach one or more images to this question', () => attachInput.click()),
       mk('↑', 'Move up', () => move(item.id, -1)),
       mk('↓', 'Move down', () => move(item.id, +1)),
       mk('✕', 'Delete', () => remove(item.id)),
     );
 
-    card.append(top, q, tools);
+    card.append(top, q, attachInput, tools);
     group.appendChild(card);
   });
 }
@@ -356,9 +430,10 @@ langSelect.addEventListener('change', () => {
 // the composed prompt leaves the machine — cite only the filename for those.
 // The full URL stays on the item for navigation and grouping.
 function sourceCitation(item, P) {
-  if (!/^file:/i.test(item.url)) return { title: item.title, url: item.url };
-  const filename = decodeURIComponent(item.url.split('#')[0].split('?')[0].split('/').pop());
-  const title = /^file:/i.test(item.title) ? filename : item.title;
+  const source = M.sourceOf(item);
+  if (!/^file:/i.test(source.url)) return { title: source.title, url: source.url };
+  const filename = decodeURIComponent(source.url.split('#')[0].split('?')[0].split('/').pop());
+  const title = /^file:/i.test(source.title) ? filename : source.title;
   return { title, url: `${P.localFile || 'local file'}: ${filename}` };
 }
 
@@ -369,19 +444,22 @@ function composePrompt(queue) {
   let lastUrl = null;
   let sourceIdx = 0;
   queue.forEach((item, idx) => {
-    if (item.url !== lastUrl) {
+    const source = M.sourceOf(item);
+    const locator = M.locatorOf(item);
+    if (source.url !== lastUrl) {
       sourceIdx += 1;
       const letter = String.fromCharCode(64 + sourceIdx); // A, B, C…
       const cite = sourceCitation(item, P);
       lines.push('', P.source(letter, cite.title, cite.url));
-      lastUrl = item.url;
+      lastUrl = source.url;
     }
-    const where = item.page ? P.pdfPage(item.page) : '';
-    lines.push('', P.excerpt(idx + 1, where, item.anchor.exact));
-    if (item.anchor.prefix || item.anchor.suffix) {
-      lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
+    const where = locator.page ? P.pdfPage(locator.page) : '';
+    const contextText = M.textOf(item.selectedContext.flatMap((context) => context.parts));
+    lines.push('', P.excerpt(idx + 1, where, contextText || '[Image selection]'));
+    if (locator.prefix || locator.suffix) {
+      lines.push(P.context(locator.prefix, locator.suffix));
     }
-    lines.push(P.question(item.question));
+    lines.push(P.question(M.textOf(item.message.parts)));
   });
 
   return lines.join('\n');
@@ -412,6 +490,18 @@ document.getElementById('clear').addEventListener('click', async () => {
   const queue = await getQueue();
   if (!queue.length) return;
   if (confirm(`Remove all ${queue.length} queries?`)) await setQueue([]);
+});
+
+document.getElementById('capture-region').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-start-region' });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tab.id, { active: true });
+  } catch (_) {
+    note('Dogear cannot capture this browser page.');
+  }
 });
 
 // Runs inside the chat tab. Finds the composer and inserts text at the end,
@@ -526,7 +616,12 @@ async function updateHotkeyHint() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.queue) render();
+  if (area !== 'local' || !changes.queue) return;
+  if (quietQueueWrites > 0) {
+    quietQueueWrites -= 1;
+    return;
+  }
+  render();
 });
 
 updateHotkeyHint();

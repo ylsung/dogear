@@ -7,6 +7,8 @@
   window.__dogearLoaded = true;
 
   const T = globalThis.DOGEAR_THEME; // see theme.js — the one place to restyle
+  const M = globalThis.DOGEAR_MODEL;
+  const COMPOSER = globalThis.DOGEAR_COMPOSER;
   const CONTEXT_LEN = 32;
   const IS_DOGEAR_VIEWER =
     location.protocol === 'chrome-extension:' && location.pathname.endsWith('/viewer.html');
@@ -173,14 +175,16 @@
     } catch (e) {
       return; // stale script after extension reload
     }
-    const here = queue.filter((item) => item.url === pageUrl());
+    const here = queue.filter((item) => M.sourceOf(item).url === pageUrl());
     here.forEach((item) => {
       const num = queue.indexOf(item) + 1;
-      let range = locateAnchor(item.anchor);
-      if (!range && item.anchor.exact.includes('\n')) {
+      const locator = M.locatorOf(item);
+      if (locator.type !== 'text-quote') return;
+      let range = locateAnchor(locator);
+      if (!range && locator.exact.includes('\n')) {
         // Multi-line text-field captures (e.g. GitHub's code view) rarely match
         // the rendered DOM verbatim; fall back to marking the first solid line.
-        const firstLine = item.anchor.exact
+        const firstLine = locator.exact
           .split('\n')
           .map((s) => s.trim())
           .find((s) => s.length >= 8);
@@ -188,7 +192,7 @@
           range = locateAnchor({ exact: firstLine, prefix: '', suffix: '', start: -1 });
         }
       }
-      if (range) wrapRange(range, item.id, num, item.question);
+      if (range) wrapRange(range, item.id, num, M.textOf(M.normalizeItem(item).message.parts));
     });
   }
 
@@ -221,12 +225,33 @@
         font-size: 11.5px; color: ${T.colors.textMuted}; border-left: 3px solid ${T.colors.primary};
         padding-left: 8px; margin: 0 0 8px 20px; max-height: 60px; overflow: hidden;
       }
-      .popover textarea {
+      .popover .excerpt img {
+        display: block; max-width: 100%; max-height: 88px; border-radius: 5px; object-fit: contain;
+      }
+      .popover .dogear-composer {
         width: 100%; min-height: 56px; resize: vertical; font-size: 13px;
         border: 1px solid ${T.colors.borderStrong}; border-radius: 6px; padding: 6px; outline: none;
-        background: ${T.colors.panel}; color: ${T.colors.text};
+        background: ${T.colors.panel}; color: ${T.colors.text}; white-space: pre-wrap;
+        overflow-wrap: anywhere; cursor: text;
       }
-      .popover textarea:focus { border-color: ${T.colors.primary}; }
+      .popover .dogear-composer:focus { border-color: ${T.colors.primary}; }
+      .dogear-composer:empty::before {
+        content: attr(data-placeholder); color: ${T.colors.textFaint}; pointer-events: none;
+      }
+      .dogear-asset-chip {
+        display: inline-flex; align-items: center; max-width: 180px; gap: 4px;
+        margin: 1px 3px; padding: 2px 4px; border: 1px solid ${T.colors.borderStrong};
+        border-radius: 5px; background: ${T.colors.groupBg}; vertical-align: middle;
+        color: ${T.colors.textMuted}; font-size: 11px;
+      }
+      .dogear-asset-chip img {
+        width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
+      }
+      .dogear-asset-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dogear-remove-asset {
+        border: 0; padding: 0 2px; background: transparent; color: ${T.colors.textFaint}; cursor: pointer;
+      }
+      .dogear-drop-active { box-shadow: inset 0 0 0 2px ${T.colors.primary}; }
       .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
       .hints { display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: ${T.colors.textFaint}; }
       .btns { display: flex; gap: 6px; }
@@ -242,24 +267,58 @@
         padding: 5px 10px; font-size: 12.5px; cursor: pointer;
       }
       .open-queue:hover { background: ${T.colors.groupBg}; }
+      .attach {
+        background: ${T.colors.panel}; color: ${T.colors.textMuted};
+        border: 1px solid ${T.colors.borderStrong}; border-radius: 6px;
+        padding: 5px 8px; font-size: 12.5px; cursor: pointer;
+      }
+      .attach:hover { background: ${T.colors.groupBg}; }
       .toast {
         display: none; left: 50%; transform: translateX(-50%); bottom: 24px;
         background: ${T.colors.dark}; color: ${T.colors.textOnDark}; border-radius: 8px;
         padding: 8px 14px; font-size: 12.5px;
+      }
+      .capture-overlay {
+        display: none; position: fixed; inset: 0; z-index: 2147483646;
+        cursor: crosshair; background: rgba(10, 16, 22, .18); user-select: none;
+      }
+      .capture-instructions {
+        position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+        display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+        color: white; background: rgba(20, 24, 28, .9); border-radius: 7px;
+        font-size: 12px; cursor: default;
+      }
+      .capture-full {
+        border: 1px solid rgba(255,255,255,.35); border-radius: 5px; padding: 4px 7px;
+        background: rgba(255,255,255,.12); color: white; cursor: pointer;
+      }
+      .capture-box {
+        display: none; position: fixed; border: 2px solid ${T.colors.primary};
+        background: ${T.colors.highlight}; box-shadow: 0 0 0 9999px rgba(10, 16, 22, .28);
+        pointer-events: none;
       }
   `;
   shadow.innerHTML = `
     <div class="popover">
       <button class="close" title="Cancel (Esc)">✕</button>
       <div class="excerpt"></div>
-      <textarea placeholder="Your query about this selection…"></textarea>
+      <div class="question" data-placeholder="Type a question, paste an image, or drop one here…"></div>
+      <input class="image-input" type="file" accept="image/*" multiple hidden />
       <div class="row">
         <div class="hints"><span>Enter to add</span><span>Esc to cancel</span></div>
         <div class="btns">
+          <button class="attach" title="Attach image">＋ Image</button>
           <button class="open-queue">Open queue</button>
           <button class="add">Add to queue</button>
         </div>
       </div>
+    </div>
+    <div class="capture-overlay" tabindex="-1">
+      <div class="capture-instructions">
+        <span>Drag to select a screenshot · Esc to cancel</span>
+        <button class="capture-full">Use visible page</button>
+      </div>
+      <div class="capture-box"></div>
     </div>
     <div class="toast"></div>
   `;
@@ -320,10 +379,15 @@
 
   const popover = shadow.querySelector('.popover');
   const excerptEl = shadow.querySelector('.excerpt');
-  const textarea = shadow.querySelector('textarea');
+  const questionEl = shadow.querySelector('.question');
+  const imageInput = shadow.querySelector('.image-input');
+  const attachBtn = shadow.querySelector('.attach');
   const addBtn = shadow.querySelector('.add');
   const closeBtn = shadow.querySelector('.close');
   const openQueueBtn = shadow.querySelector('.open-queue');
+  const captureOverlay = shadow.querySelector('.capture-overlay');
+  const captureBox = shadow.querySelector('.capture-box');
+  const captureFullBtn = shadow.querySelector('.capture-full');
   const toastEl = shadow.querySelector('.toast');
 
   function attachHost() {
@@ -335,7 +399,38 @@
   // the selection on any mousedown, so it may already be gone by the time the
   // context-menu command or hotkey reaches us.
   let pendingCapture = null;
+  let pendingCaptureAt = 0;
   let lastPoint = { x: 24, y: 24 };
+  const previewUrls = new Map();
+
+  function fileDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error || new Error('Could not read image.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const composer = COMPOSER.create(questionEl, {
+    maxFileSize: 15 * 1024 * 1024,
+    storeFile: async (file) => {
+      const previewUrl = URL.createObjectURL(file);
+      const response = await chrome.runtime.sendMessage({
+        type: 'dogear-store-asset',
+        dataUrl: await fileDataUrl(file),
+        displayName: file.name || 'pasted-image.png',
+      });
+      if (!response?.ok) {
+        URL.revokeObjectURL(previewUrl);
+        throw new Error(response?.error || 'Could not attach image.');
+      }
+      previewUrls.set(response.asset.id, previewUrl);
+      return response.asset;
+    },
+    resolveAssetUrl: async (id) => previewUrls.get(id) || '',
+    onError: toast,
+  });
 
   function currentSelectionRange() {
     const sel = window.getSelection();
@@ -395,26 +490,129 @@
   // previous stash when the selection is already gone.
   function stashCapture() {
     const cap = getCapture();
-    if (cap) pendingCapture = cap;
+    if (cap) {
+      pendingCapture = cap;
+      pendingCaptureAt = Date.now();
+    }
   }
 
   function openPopover() {
-    const cap = getCapture() || pendingCapture;
-    if (!cap) return;
+    const cap = getCapture() || (Date.now() - pendingCaptureAt < 2000 ? pendingCapture : null);
+    if (!cap) {
+      startRegionCapture();
+      return;
+    }
     savedCapture = cap;
     const text = cap.text;
+    excerptEl.replaceChildren();
     excerptEl.textContent = text.length > 200 ? `${text.slice(0, 200)}…` : text;
     positionNear(popover, captureRect(cap));
     popover.style.display = 'block';
-    textarea.value = '';
-    textarea.focus();
+    composer.setParts([]).then(() => composer.focus());
   }
 
   function closePopover() {
     popover.style.display = 'none';
     savedCapture = null;
     pendingCapture = null;
+    composer.setParts([]);
   }
+
+  function sourceReference() {
+    const source = { url: pageUrl(), title: document.title || pageUrl() };
+    if (IS_DOGEAR_VIEWER) source.viewUrl = location.href.split('#')[0];
+    return source;
+  }
+
+  function startRegionCapture() {
+    closePopover();
+    captureBox.style.display = 'none';
+    captureOverlay.style.display = 'block';
+    captureOverlay.focus();
+  }
+
+  function stopRegionCapture() {
+    captureOverlay.style.display = 'none';
+    captureBox.style.display = 'none';
+  }
+
+  async function finishRegionCapture(rect) {
+    stopRegionCapture();
+    // Let Chrome paint away Dogear's overlay before capturing the tab.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'dogear-capture-region',
+        rect,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+      if (!response?.ok) throw new Error(response?.error || 'Could not capture screenshot.');
+      previewUrls.set(response.asset.id, response.previewDataUrl);
+      savedCapture = {
+        kind: 'image',
+        asset: response.asset,
+        source: sourceReference(),
+        locator: {
+          type: 'viewport-region',
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+        },
+      };
+      const img = document.createElement('img');
+      img.src = response.previewDataUrl;
+      img.alt = 'Selected screenshot';
+      excerptEl.replaceChildren(img);
+      positionNear(popover, { bottom: Math.min(rect.y + rect.height, innerHeight - 180), left: rect.x });
+      popover.style.display = 'block';
+      composer.setParts([]).then(() => composer.focus());
+    } catch (error) {
+      toast(error.message || 'Could not capture screenshot.');
+    }
+  }
+
+  let captureStart = null;
+  captureOverlay.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('.capture-instructions')) return;
+    event.preventDefault();
+    captureStart = { x: event.clientX, y: event.clientY };
+    captureBox.style.display = 'block';
+    captureOverlay.setPointerCapture(event.pointerId);
+  });
+  captureOverlay.addEventListener('pointermove', (event) => {
+    if (!captureStart) return;
+    const x = Math.min(captureStart.x, event.clientX);
+    const y = Math.min(captureStart.y, event.clientY);
+    captureBox.style.left = `${x}px`;
+    captureBox.style.top = `${y}px`;
+    captureBox.style.width = `${Math.abs(event.clientX - captureStart.x)}px`;
+    captureBox.style.height = `${Math.abs(event.clientY - captureStart.y)}px`;
+  });
+  captureOverlay.addEventListener('pointerup', (event) => {
+    if (!captureStart) return;
+    const start = captureStart;
+    captureStart = null;
+    const rect = {
+      x: Math.min(start.x, event.clientX),
+      y: Math.min(start.y, event.clientY),
+      width: Math.abs(event.clientX - start.x),
+      height: Math.abs(event.clientY - start.y),
+    };
+    if (rect.width < 8 || rect.height < 8) stopRegionCapture();
+    else finishRegionCapture(rect);
+  });
+  captureOverlay.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') stopRegionCapture();
+  });
+  captureFullBtn.addEventListener('click', () => finishRegionCapture({
+    x: 0,
+    y: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
 
   let toastTimer = null;
   function toast(msg) {
@@ -425,12 +623,25 @@
   }
 
   async function saveQuestion() {
-    const question = textarea.value.trim();
-    if (!question || !savedCapture) return;
+    const messageParts = composer.getParts();
+    const hasQuestion = messageParts.some(
+      (part) => part.type === 'asset' || (part.type === 'text' && part.text.trim()),
+    );
+    if (!hasQuestion || !savedCapture) return;
     const cap = savedCapture;
     let anchor;
     let page;
-    if (cap.kind === 'range') {
+    if (cap.kind === 'image') {
+      const item = M.createImageRequest({
+        id: crypto.randomUUID(),
+        source: cap.source,
+        locator: cap.locator,
+        asset: cap.asset,
+        messageParts,
+      });
+      await addQueueItem(item, cap.source.url);
+      return;
+    } else if (cap.kind === 'range') {
       anchor = makeAnchor(cap.range);
       // In the bundled PDF.js viewer, record which PDF page the selection is on.
       const startEl =
@@ -450,25 +661,26 @@
         start: -1,
       };
     }
-    const item = {
+    if (page) anchor.page = page;
+    const source = sourceReference();
+    const item = M.createTextRequest({
       id: crypto.randomUUID(),
-      url: pageUrl(),
-      title: document.title || pageUrl(),
-      anchor,
-      question,
-      createdAt: Date.now(),
-    };
-    if (page) item.page = page;
-    // Where to navigate back to (the Dogear viewer), as opposed to `url`,
-    // the canonical source cited in the composed prompt.
-    if (IS_DOGEAR_VIEWER) item.viewUrl = location.href.split('#')[0];
+      source,
+      locator: { type: 'text-quote', ...anchor },
+      question: '',
+    });
+    item.message = { role: 'user', parts: messageParts };
+    await addQueueItem(item, source.url, cap);
+  }
+
+  async function addQueueItem(item, sourceUrl, cap = savedCapture) {
     let queue;
     try {
       ({ queue = [] } = await chrome.storage.local.get('queue'));
       // Keep the queue grouped: insert after the last question from this page.
       let insertAt = queue.length;
       for (let i = queue.length - 1; i >= 0; i--) {
-        if (queue[i].url === item.url) {
+        if (M.sourceOf(queue[i]).url === sourceUrl) {
           insertAt = i + 1;
           break;
         }
@@ -480,7 +692,7 @@
       toast('Dogear was reloaded — refresh this page to reconnect.');
       return;
     }
-    if (cap.kind === 'input') {
+    if (cap?.kind === 'input') {
       cap.el.setSelectionRange(cap.end, cap.end);
     }
     closePopover();
@@ -489,6 +701,11 @@
   }
 
   addBtn.addEventListener('click', saveQuestion);
+  attachBtn.addEventListener('click', () => imageInput.click());
+  imageInput.addEventListener('change', () => {
+    composer.addFiles(imageInput.files);
+    imageInput.value = '';
+  });
   closeBtn.addEventListener('click', closePopover);
   openQueueBtn.addEventListener('click', () => {
     try {
@@ -497,7 +714,7 @@
       toast('Dogear was reloaded — refresh this page to reconnect.');
     }
   });
-  textarea.addEventListener('keydown', (e) => {
+  questionEl.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -508,8 +725,8 @@
   });
   // keyup/keypress/input also cross the shadow boundary (composed events);
   // stop them so page scripts can't keylog the question as it's typed.
-  for (const type of ['keyup', 'keypress', 'input']) {
-    textarea.addEventListener(type, (e) => e.stopPropagation());
+  for (const type of ['keyup', 'keypress', 'input', 'paste', 'drop']) {
+    questionEl.addEventListener(type, (e) => e.stopPropagation());
   }
 
   function maybeStashCapture() {
@@ -547,6 +764,10 @@
     if (msg && msg.type === 'dogear-open-ask') {
       attachHost();
       openPopover();
+    }
+    if (msg && msg.type === 'dogear-start-region') {
+      attachHost();
+      startRegionCapture();
     }
   });
 

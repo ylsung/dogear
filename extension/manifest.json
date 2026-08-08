@@ -9,7 +9,7 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["theme.js", "content.js"],
+      "js": ["theme.js", "model.js", "composer.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": true,
       "match_about_blank": true
@@ -37,7 +37,7 @@
   "commands": {
     "ask-selection": {
       "suggested_key": { "default": "Alt+Q", "mac": "MacCtrl+Q" },
-      "description": "Dogear: ask about the current selection"
+      "description": "Dogear: ask about a text or screenshot selection"
     }
   }
 }
