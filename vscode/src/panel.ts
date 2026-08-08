@@ -52,8 +52,11 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     this.pushState();
   }
 
-  async compose(title: string): Promise<UserMessage | undefined> {
-    if (this.pendingComposition) await this.cancelComposition();
+  async compose(
+    title: string,
+    retainedAssetIds: readonly string[] = [],
+  ): Promise<UserMessage | undefined> {
+    if (this.pendingComposition) await this.cancelComposition(retainedAssetIds);
     try {
       await this.reveal();
     } catch {
@@ -61,7 +64,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       return undefined;
     }
     return new Promise((resolve) => {
-      this.pendingComposition = { resolve, assetIds: new Set() };
+      this.pendingComposition = { resolve, assetIds: new Set(retainedAssetIds) };
       this.view?.webview.postMessage({ type: 'compose', title });
     });
   }
@@ -80,16 +83,12 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     });
   }
 
-  private async cancelComposition(): Promise<void> {
+  private async cancelComposition(retainedAssetIds: readonly string[] = []): Promise<void> {
     const pending = this.pendingComposition;
     if (!pending) return;
     this.pendingComposition = undefined;
     pending.resolve(undefined);
-    const referenced = this.store.get().flatMap((item) =>
-      item.message.parts
-        .filter((part) => part.type === 'asset')
-        .map((part) => part.assetId),
-    );
+    const referenced = [...assetIdsOf(this.store.get()), ...retainedAssetIds];
     await this.assets.removeUnreferenced(referenced);
   }
 

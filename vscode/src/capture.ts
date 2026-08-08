@@ -36,7 +36,7 @@ function itemId(): string {
 }
 
 export interface QuestionComposer {
-  compose(title: string): Promise<UserMessage | undefined>;
+  compose(title: string, retainedAssetIds?: readonly string[]): Promise<UserMessage | undefined>;
 }
 
 // Webviews owned by another extension do not expose their DOM or Selection to
@@ -179,7 +179,7 @@ export async function askScreenshotSelection(
     }
 
     const asset = await assets.putUri(destination);
-    const message = await composer.compose('Screenshot selection');
+    const message = await composer.compose('Screenshot selection', [asset.id]);
     if (!message) {
       await assets.removeUnreferenced(assetIdsOf(store.get()));
       return;
@@ -239,7 +239,7 @@ export async function askImageSelection(
   }
 
   const title = vscode.workspace.asRelativePath(uri, false);
-  const message = await composer.compose(title);
+  const message = await composer.compose(title, [asset.id]);
   if (!message) {
     await assets.removeUnreferenced(assetIdsOf(store.get()));
     return;
