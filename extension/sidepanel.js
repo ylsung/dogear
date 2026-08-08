@@ -37,10 +37,17 @@ const handoffAssetsEl = document.getElementById('manual-assets');
 const liveObjectUrls = [];
 const handoffObjectUrls = [];
 const liveComposers = [];
-let quietQueueWrites = 0;
+const pendingQuietQueueWrites = new Map();
+let renderRequested = false;
+let renderRunning = false;
+let manualHandoffRenderVersion = 0;
 
 const SOFT_CAP = 10;
 const ATTACHMENT_STATUS_KEY = 'attachmentStatus';
+const QUESTION_HISTORY_LIMIT = 5;
+const questionUndoStack = [];
+const questionRedoStack = [];
+let questionHistoryMutation = Promise.resolve();
 
 async function getQueue() {
   const { queue = [] } = await chrome.storage.local.get('queue');
@@ -51,13 +58,41 @@ async function setQueue(queue) {
   await chrome.storage.local.set({ queue });
 }
 
-async function setQueueQuietly(queue) {
-  quietQueueWrites += 1;
-  await chrome.storage.local.set({ queue });
+function queueFingerprint(queue) {
+  return JSON.stringify(queue || []);
 }
 
-async function collectGarbage(queue) {
-  const referenced = queue.flatMap(M.assetIdsOf);
+function queueOrderFingerprint(queue) {
+  return JSON.stringify((queue || []).map((item) => item.id));
+}
+
+function consumeQuietQueueWrite(fingerprint) {
+  const count = pendingQuietQueueWrites.get(fingerprint) || 0;
+  if (!count) return false;
+  if (count === 1) pendingQuietQueueWrites.delete(fingerprint);
+  else pendingQuietQueueWrites.set(fingerprint, count - 1);
+  return true;
+}
+
+async function setQueueQuietly(queue) {
+  const fingerprint = queueFingerprint(queue);
+  pendingQuietQueueWrites.set(fingerprint, (pendingQuietQueueWrites.get(fingerprint) || 0) + 1);
+  try {
+    await chrome.storage.local.set({ queue });
+  } catch (error) {
+    consumeQuietQueueWrite(fingerprint);
+    throw error;
+  }
+}
+
+async function collectGarbage(queue, retainedAssetIds = []) {
+  const questionHistoryAssetIds = [...questionUndoStack, ...questionRedoStack]
+    .flatMap((action) => M.assetIdsOf(action.item));
+  const referenced = [
+    ...queue.flatMap(M.assetIdsOf),
+    ...retainedAssetIds,
+    ...questionHistoryAssetIds,
+  ];
   await ASSETS.removeUnreferenced(referenced);
   const keep = new Set(referenced);
   const { [ATTACHMENT_STATUS_KEY]: current = {} } =
@@ -246,8 +281,16 @@ async function render() {
       const groupIdx = groupBlocks.length;
       groupBlocks.push([]);
       group.dataset.groupIdx = String(groupIdx);
-      group.draggable = true;
-      group.addEventListener('dragstart', (e) => {
+      const sourceHeader = document.createElement('div');
+      sourceHeader.className = 'source-header';
+      const groupDragHandle = document.createElement('span');
+      groupDragHandle.className = 'drag-handle group-drag-handle';
+      groupDragHandle.draggable = true;
+      groupDragHandle.role = 'button';
+      groupDragHandle.tabIndex = 0;
+      groupDragHandle.title = 'Drag to reorder this source group';
+      groupDragHandle.textContent = '⋮⋮';
+      groupDragHandle.addEventListener('dragstart', (e) => {
         dragMode = 'group';
         draggedGroupIdx = groupIdx;
         e.dataTransfer.effectAllowed = 'move';
@@ -269,7 +312,8 @@ async function render() {
       const label = document.createElement('span');
       label.textContent = sourceInfo.title;
       src.append(icon, label);
-      group.appendChild(src);
+      sourceHeader.append(src, groupDragHandle);
+      group.appendChild(sourceHeader);
       listEl.appendChild(group);
       lastUrl = sourceInfo.url;
     }
@@ -278,11 +322,10 @@ async function render() {
     const card = document.createElement('div');
     card.className = 'card';
     card.dataset.id = item.id;
-    card.draggable = true;
     if (selectedIds.has(item.id)) card.classList.add('selected');
 
     card.addEventListener('click', async (e) => {
-      if (e.target.closest('.dogear-composer, textarea, input, button')) return;
+      if (e.target.closest('.dogear-composer, blockquote, .context-images, textarea, input, button, a')) return;
       if (e.shiftKey && lastAnchorId) {
         await selectRange(lastAnchorId, item.id);
       } else if (e.metaKey || e.ctrlKey) {
@@ -297,21 +340,6 @@ async function render() {
       applySelectionClasses();
     });
 
-    card.addEventListener('dragstart', (e) => {
-      if (e.target.closest('.dogear-composer, input, button')) {
-        e.preventDefault();
-        return;
-      }
-      e.stopPropagation(); // don't also start the enclosing group's drag
-      dragMode = 'card';
-      if (!selectedIds.has(item.id)) {
-        selectedIds = new Set([item.id]);
-        applySelectionClasses();
-      }
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', item.id);
-    });
-
     const top = document.createElement('div');
     top.className = 'top';
     const num = document.createElement('span');
@@ -323,7 +351,7 @@ async function render() {
       quote.textContent = truncate(contextText, 220);
       quote.title = contextText;
       top.append(num, quote);
-    } else {
+    } else if (locator.type !== 'unanchored') {
       const images = document.createElement('div');
       images.className = 'context-images';
       top.append(num, images);
@@ -340,19 +368,30 @@ async function render() {
           images.appendChild(img);
         });
       }
+    } else {
+      const pageContext = document.createElement('span');
+      pageContext.className = 'page-context';
+      pageContext.textContent = 'Whole page';
+      top.append(num, pageContext);
     }
 
     const q = document.createElement('div');
     q.dataset.placeholder = 'Type a question, paste an image, or drop one here…';
     let draftParts = item.message.parts;
-    const saveDraft = async (parts) => {
-      const queueNow = await getQueue();
-      const target = queueNow.find((x) => x.id === item.id);
-      if (target) {
-        target.message = { role: 'user', parts: M.coalesceParts(parts) };
-        await setQueueQuietly(queueNow);
-        await collectGarbage(queueNow);
-      }
+    let saveDraftChain = Promise.resolve();
+    const undoRetainedAssetIds = new Set();
+    const saveDraft = (parts) => {
+      const snapshot = M.coalesceParts(parts);
+      saveDraftChain = saveDraftChain.catch(() => {}).then(async () => {
+        const queueNow = await getQueue();
+        const target = queueNow.find((x) => x.id === item.id);
+        if (target) {
+          target.message = { role: 'user', parts: snapshot };
+          await setQueueQuietly(queueNow);
+          await collectGarbage(queueNow, undoRetainedAssetIds);
+        }
+      });
+      return saveDraftChain;
     };
     const composer = COMPOSER.create(q, {
       parts: item.message.parts,
@@ -370,10 +409,29 @@ async function render() {
         return url;
       },
       onChange: (parts, reason) => {
+        const previousAssetIds = new Set(
+          draftParts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        const nextAssetIds = new Set(
+          parts.filter((part) => part.type === 'asset').map((part) => part.assetId),
+        );
+        for (const id of previousAssetIds) {
+          if (!nextAssetIds.has(id)) undoRetainedAssetIds.add(id);
+        }
+        for (const id of nextAssetIds) undoRetainedAssetIds.delete(id);
         draftParts = parts;
-        if (reason === 'asset') saveDraft(parts);
+        if (reason === 'asset') return saveDraft(parts);
       },
-      onBlur: () => saveDraft(draftParts),
+      onBlur: (parts, event) => {
+        draftParts = parts;
+        if (event.relatedTarget instanceof Node && card.contains(event.relatedTarget)) return;
+        return saveDraft(parts);
+      },
+      onDestroy: () => {
+        if (!undoRetainedAssetIds.size) return;
+        undoRetainedAssetIds.clear();
+        getQueue().then(collectGarbage);
+      },
       onError: note,
     });
     liveComposers.push(composer);
@@ -390,6 +448,23 @@ async function render() {
 
     const tools = document.createElement('div');
     tools.className = 'tools';
+    const cardDragHandle = document.createElement('span');
+    cardDragHandle.className = 'drag-handle card-drag-handle';
+    cardDragHandle.draggable = true;
+    cardDragHandle.role = 'button';
+    cardDragHandle.tabIndex = 0;
+    cardDragHandle.title = 'Drag to reorder this question';
+    cardDragHandle.textContent = '⋮⋮';
+    cardDragHandle.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      dragMode = 'card';
+      if (!selectedIds.has(item.id)) {
+        selectedIds = new Set([item.id]);
+        applySelectionClasses();
+      }
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+    });
     const mk = (label, title, fn) => {
       const b = document.createElement('button');
       b.textContent = label;
@@ -398,6 +473,7 @@ async function render() {
       return b;
     };
     tools.append(
+      cardDragHandle,
       mk('＋ Image', 'Attach one or more images to this question', () => attachInput.click()),
       mk('↑', 'Move up', () => move(item.id, -1)),
       mk('↓', 'Move down', () => move(item.id, +1)),
@@ -408,6 +484,21 @@ async function render() {
     group.appendChild(card);
   });
   await renderManualHandoff(queue);
+}
+
+async function scheduleRender() {
+  renderRequested = true;
+  if (renderRunning) return;
+  renderRunning = true;
+  try {
+    while (renderRequested) {
+      renderRequested = false;
+      await render();
+    }
+  } finally {
+    renderRunning = false;
+    if (renderRequested) scheduleRender();
+  }
 }
 
 async function move(id, delta) {
@@ -421,10 +512,55 @@ async function move(id, delta) {
 
 async function remove(id) {
   const queue = await getQueue();
-  const next = queue.filter((x) => x.id !== id);
+  const index = queue.findIndex((item) => item.id === id);
+  if (index === -1) return;
+  const [item] = queue.splice(index, 1);
+  questionUndoStack.push({ item, index });
+  if (questionUndoStack.length > QUESTION_HISTORY_LIMIT) questionUndoStack.shift();
+  questionRedoStack.length = 0;
+  const next = queue;
   await setQueue(next);
   await collectGarbage(next);
+  note('Question deleted — press Command/Ctrl+Z to restore it.');
 }
+
+async function applyQuestionHistory(redo) {
+  const from = redo ? questionRedoStack : questionUndoStack;
+  if (!from.length) return false;
+  const action = from.pop();
+  const queue = await getQueue();
+  if (redo) {
+    const index = queue.findIndex((item) => item.id === action.item.id);
+    if (index !== -1) queue.splice(index, 1);
+    questionUndoStack.push(action);
+  } else {
+    if (!queue.some((item) => item.id === action.item.id)) {
+      queue.splice(Math.min(action.index, queue.length), 0, action.item);
+    }
+    questionRedoStack.push(action);
+  }
+  await setQueue(queue);
+  await collectGarbage(queue);
+  note(redo ? 'Question deleted again.' : 'Question restored.');
+  return true;
+}
+
+function queueQuestionHistory(redo) {
+  questionHistoryMutation = questionHistoryMutation.then(() => applyQuestionHistory(redo));
+  return questionHistoryMutation;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.defaultPrevented || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+  if (event.key.toLowerCase() !== 'z') return;
+  const target = event.target;
+  if (target instanceof Element &&
+      (target.closest('.dogear-composer, input, textarea, select') || target.isContentEditable)) return;
+  const stack = event.shiftKey ? questionRedoStack : questionUndoStack;
+  if (!stack.length) return;
+  event.preventDefault();
+  queueQuestionHistory(event.shiftKey);
+});
 
 // ---------- prompt composition ----------
 // All user-facing prompt text comes from prompts/<lang>.js template packs.
@@ -517,9 +653,11 @@ function composePrompt(queue, assets) {
     const contextParts = item.selectedContext.flatMap((context) => context.parts);
     const contextText = renderParts(contextParts, labels);
     const hasContextAsset = contextParts.some((part) => part.type === 'asset');
-    lines.push('', hasContextAsset
-      ? P.multimodalSelection(idx + 1, where, contextText)
-      : P.excerpt(idx + 1, where, contextText));
+    lines.push('', locator.type === 'unanchored'
+      ? P.pageQuestion(idx + 1)
+      : hasContextAsset
+        ? P.multimodalSelection(idx + 1, where, contextText)
+        : P.excerpt(idx + 1, where, contextText));
     if (locator.prefix || locator.suffix) {
       lines.push(P.context(locator.prefix, locator.suffix));
     }
@@ -548,10 +686,12 @@ async function composeOrWarn() {
 }
 
 async function renderManualHandoff(queue) {
-  handoffObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+  const version = ++manualHandoffRenderVersion;
   const assets = await buildAssetPlan(queue);
   const { [ATTACHMENT_STATUS_KEY]: attachmentStatus = {} } =
     await chrome.storage.session.get(ATTACHMENT_STATUS_KEY);
+  if (version !== manualHandoffRenderVersion) return;
+  handoffObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
   handoffAssetsEl.replaceChildren();
   handoffEl.hidden = !assets.length;
   if (!assets.length) return;
@@ -645,6 +785,8 @@ document.getElementById('clear').addEventListener('click', async () => {
   const queue = await getQueue();
   if (!queue.length) return;
   if (confirm(`Remove all ${queue.length} queries?`)) {
+    questionUndoStack.length = 0;
+    questionRedoStack.length = 0;
     await setQueue([]);
     await collectGarbage([]);
   }
@@ -659,6 +801,18 @@ document.getElementById('capture-region').addEventListener('click', async () => 
     await chrome.tabs.update(tab.id, { active: true });
   } catch (_) {
     note('Dogear cannot capture this browser page.');
+  }
+});
+
+document.getElementById('ask-page').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'dogear-open-page-ask' }, { frameId: 0 });
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tab.id, { active: true });
+  } catch (_) {
+    note('Dogear cannot ask about this browser page.');
   }
 });
 
@@ -1071,13 +1225,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
     return;
   }
   if (area === 'local' && changes.queue) {
-    if (quietQueueWrites > 0) {
-      quietQueueWrites -= 1;
+    const sameQuestionOrder =
+      queueOrderFingerprint(changes.queue.oldValue) === queueOrderFingerprint(changes.queue.newValue);
+    if (sameQuestionOrder) {
+      consumeQuietQueueWrite(queueFingerprint(changes.queue.newValue));
+      getQueue().then(renderManualHandoff);
       return;
     }
-    render();
+    scheduleRender();
   }
 });
 
 updateHotkeyHint();
-render();
+scheduleRender();

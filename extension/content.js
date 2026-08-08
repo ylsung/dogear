@@ -239,7 +239,7 @@
         content: attr(data-placeholder); color: ${T.colors.textFaint}; pointer-events: none;
       }
       .dogear-asset-chip {
-        display: inline-flex; align-items: center; max-width: 180px; gap: 4px;
+        display: inline-flex; align-items: center; gap: 4px;
         margin: 1px 3px; padding: 2px 4px; border: 1px solid ${T.colors.borderStrong};
         border-radius: 5px; background: ${T.colors.groupBg}; vertical-align: middle;
         color: ${T.colors.textMuted}; font-size: 11px;
@@ -247,7 +247,11 @@
       .dogear-asset-chip img {
         width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
       }
-      .dogear-asset-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dogear-inline-drop-caret {
+        display: inline-block; width: 2px; height: 1.35em; margin: 0 1px;
+        border-radius: 1px; background: ${T.colors.primary}; vertical-align: text-bottom;
+        pointer-events: none;
+      }
       .dogear-remove-asset {
         border: 0; padding: 0 2px; background: transparent; color: ${T.colors.textFaint}; cursor: pointer;
       }
@@ -401,7 +405,7 @@
   let pendingCapture = null;
   let pendingCaptureAt = 0;
   let lastPoint = { x: 24, y: 24 };
-  const previewUrls = new Map();
+  const questionPreviewBlobs = new Map();
 
   function fileDataUrl(file) {
     return new Promise((resolve, reject) => {
@@ -415,20 +419,24 @@
   const composer = COMPOSER.create(questionEl, {
     maxFileSize: 15 * 1024 * 1024,
     storeFile: async (file) => {
-      const previewUrl = URL.createObjectURL(file);
       const response = await chrome.runtime.sendMessage({
         type: 'dogear-store-asset',
         dataUrl: await fileDataUrl(file),
         displayName: file.name || 'pasted-image.png',
       });
       if (!response?.ok) {
-        URL.revokeObjectURL(previewUrl);
         throw new Error(response?.error || 'Could not attach image.');
       }
-      previewUrls.set(response.asset.id, previewUrl);
+      // Keep the Blob, not a reusable object URL. The composer owns and revokes
+      // every URL it renders, so undo must create a fresh URL for the restored
+      // thumbnail instead of reusing one that has already been revoked.
+      questionPreviewBlobs.set(response.asset.id, file);
       return response.asset;
     },
-    resolveAssetUrl: async (id) => previewUrls.get(id) || '',
+    resolveAssetUrl: async (id) => {
+      const blob = questionPreviewBlobs.get(id);
+      return blob ? URL.createObjectURL(blob) : '';
+    },
     onError: toast,
   });
 
@@ -516,6 +524,17 @@
     composer.setParts([]).then(() => composer.focus());
   }
 
+  function openPagePopover() {
+    closePopover();
+    const source = sourceReference();
+    savedCapture = { kind: 'page', source };
+    excerptEl.replaceChildren();
+    excerptEl.textContent = 'Asking about this page — no selection';
+    positionNear(popover, { bottom: 18, left: Math.max(18, window.innerWidth - 380) });
+    popover.style.display = 'block';
+    composer.setParts([]).then(() => composer.focus());
+  }
+
   function closePopover() {
     popover.style.display = 'none';
     savedCapture = null;
@@ -552,7 +571,6 @@
         viewport: { width: window.innerWidth, height: window.innerHeight },
       });
       if (!response?.ok) throw new Error(response?.error || 'Could not capture screenshot.');
-      previewUrls.set(response.asset.id, response.previewDataUrl);
       savedCapture = {
         kind: 'image',
         asset: response.asset,
@@ -645,6 +663,14 @@
         messageParts,
       });
       await addQueueItem(item, cap.source.url);
+      return;
+    } else if (cap.kind === 'page') {
+      const item = M.createPageRequest({
+        id: crypto.randomUUID(),
+        source: cap.source,
+        messageParts,
+      });
+      await addQueueItem(item, cap.source.url, cap);
       return;
     } else if (cap.kind === 'range') {
       anchor = makeAnchor(cap.range);
@@ -773,6 +799,10 @@
     if (msg && msg.type === 'dogear-start-region') {
       attachHost();
       startRegionCapture();
+    }
+    if (msg && msg.type === 'dogear-open-page-ask') {
+      attachHost();
+      openPagePopover();
     }
   });
 

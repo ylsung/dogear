@@ -44,3 +44,15 @@ test('collects unique assets from context and message', () => {
   };
   assert.deepEqual(model.assetIdsOf(item), ['context', 'reference']);
 });
+
+test('creates an unanchored whole-page request', () => {
+  const item = model.createPageRequest({
+    id: 'page-question',
+    source: { url: 'https://example.com', title: 'Example' },
+    messageParts: [model.textPart('Summarize this page.')],
+    createdAt: 42,
+  });
+  assert.equal(item.selectedContext[0].locator.type, 'unanchored');
+  assert.deepEqual(item.selectedContext[0].parts, []);
+  assert.deepEqual(item.message.parts, [{ type: 'text', text: 'Summarize this page.' }]);
+});
