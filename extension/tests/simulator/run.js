@@ -58,6 +58,9 @@ async function main() {
   const contentPath = path.join(extensionCopy, 'content.js');
   const content = fs.readFileSync(contentPath, 'utf8');
   fs.writeFileSync(contentPath, content.replace(
+    "host.attachShadow({ mode: 'closed' })",
+    "host.attachShadow({ mode: 'open' })",
+  ).replace(
     '\n  attachHost();\n  refreshHighlights();',
     `
   if (location.hostname === '127.0.0.1') {
@@ -127,7 +130,7 @@ async function main() {
     page = context.pages()[0] || await context.newPage();
     await page.goto(`http://127.0.0.1:${fixturePort}/chat.html?target=chatgpt`);
 
-    await worker.evaluate(async () => {
+    const seededAssets = await worker.evaluate(async () => {
       await chrome.storage.local.clear();
       await chrome.storage.session.clear();
       const assets = [];
@@ -144,16 +147,10 @@ async function main() {
         id: crypto.randomUUID(),
         source: { url: 'http://127.0.0.1/simulator', title: 'Attachment simulator' },
         locator: { type: 'text-quote', exact: 'Three simulated images', prefix: '', suffix: '', start: 0 },
-        question: '',
+        question: 'Compare the selected text.',
       });
-      item.message.parts = [
-        DOGEAR_MODEL.textPart('Compare '),
-        ...assets.flatMap((asset, index) => [
-          DOGEAR_MODEL.assetPart(asset.id, asset.mimeType, asset.displayName),
-          DOGEAR_MODEL.textPart(index === assets.length - 1 ? '.' : ', '),
-        ]),
-      ];
       await chrome.storage.local.set({ queue: [item] });
+      return assets.map(({ id, mimeType, displayName }) => ({ id, mimeType, displayName }));
     });
 
     await page.locator('#open-dogear').click();
@@ -163,10 +160,203 @@ async function main() {
     }, 'Dogear side-panel target');
     sideClient = await CDP({ target: sideTarget, port: debugPort });
     await Promise.all([sideClient.Runtime.enable(), sideClient.Page.enable()]);
+    await waitFor(() => sideValue(sideClient, `document.querySelectorAll('.card').length === 1`), 'initial queue card');
+    const initiallyHidden = await sideValue(sideClient, `document.querySelector('#manual-handoff').hidden`);
+    if (!initiallyHidden) throw new Error('Manual handoff should start hidden for a text-only question.');
+
+    // Reproduce the old stale-render sequence: an in-composer save was treated
+    // as "quiet", and an unmatched quiet-write counter could then suppress
+    // later captures from the content script. The image save must refresh only
+    // the handoff tray; the external captures must refresh the full queue.
+    await sideValue(sideClient, `(async () => {
+      const assets = ${JSON.stringify(seededAssets)};
+      const queue = await getQueue();
+      queue[0].message.parts = [
+        DOGEAR_MODEL.textPart('Compare '),
+        ...assets.flatMap((asset, index) => [
+          DOGEAR_MODEL.assetPart(asset.id, asset.mimeType, asset.displayName),
+          DOGEAR_MODEL.textPart(index === assets.length - 1 ? '.' : ', '),
+        ]),
+      ];
+      await setQueueQuietly(queue);
+      await setQueueQuietly(queue);
+    })()`);
+    await waitFor(
+      () => sideValue(sideClient, `!document.querySelector('#manual-handoff').hidden && document.querySelectorAll('.handoff-asset').length === 3`),
+      'manual handoff refresh after a quiet image edit',
+    );
+
+    await worker.evaluate(async (assets) => {
+      const queue = (await chrome.storage.local.get('queue')).queue;
+      const firstAsset = await DOGEAR_ASSETS.get(assets[0].id);
+      queue.push(DOGEAR_MODEL.createImageRequest({
+        id: crypto.randomUUID(),
+        source: { url: 'http://127.0.0.1/simulator', title: 'Attachment simulator' },
+        locator: { type: 'region', x: 10, y: 10, width: 160, height: 100 },
+        asset: firstAsset,
+        messageParts: [DOGEAR_MODEL.textPart('Explain this screenshot.')],
+      }));
+      queue.push(DOGEAR_MODEL.createTextRequest({
+        id: crypto.randomUUID(),
+        source: { url: 'http://127.0.0.1/simulator', title: 'Attachment simulator' },
+        locator: { type: 'text-quote', exact: 'A later text selection', prefix: '', suffix: '', start: 25 },
+        question: 'Explain this selection.',
+      }));
+      await chrome.storage.local.set({ queue });
+    }, seededAssets);
+    await waitFor(
+      () => sideValue(sideClient, `document.querySelectorAll('.card').length === 3 && document.querySelector('#count').textContent === '3 queries'`),
+      'two externally captured questions in the visible queue',
+    );
+    await waitFor(
+      () => sideValue(sideClient, `document.querySelectorAll('.card')[0].querySelectorAll('.dogear-asset-chip').length === 3`),
+      'complete atomic rendering of three inline image chips',
+    );
+
+    const batchPersistence = await sideValue(sideClient, `(async () => {
+      const files = ['#10b981', '#8b5cf6', '#f97316'].map((color, index) => new File([
+        '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="50"><rect width="80" height="50" fill="' + color + '"/></svg>',
+      ], 'batch-race-' + (index + 1) + '.svg', { type: 'image/svg+xml' }));
+      await liveComposers[0].addFiles(files);
+      const queue = await getQueue();
+      const added = queue[0].message.parts.filter((part) =>
+        part.type === 'asset' && part.label.startsWith('batch-race-')
+      );
+      const records = await Promise.all(added.map((part) => ASSETS.get(part.assetId)));
+      const allPersisted = added.length === 3 && records.every(Boolean);
+
+      const addedIds = new Set(added.map((part) => part.assetId));
+      queue[0].message.parts = queue[0].message.parts.filter((part) =>
+        part.type !== 'asset' || !addedIds.has(part.assetId)
+      );
+      await setQueue(queue);
+      await collectGarbage(queue);
+      return { added: added.length, allPersisted };
+    })()`);
+    if (batchPersistence.added !== 3 || !batchPersistence.allPersisted) {
+      throw new Error(`Multi-image persistence regression: ${JSON.stringify(batchPersistence)}`);
+    }
     await waitFor(
       () => sideValue(sideClient, `document.querySelectorAll('.handoff-asset').length === 3`),
-      'three Dogear handoff rows',
+      'cleanup of temporary multi-image batch',
     );
+    await waitFor(
+      () => sideValue(sideClient, `document.querySelectorAll('.card')[0].querySelectorAll('.dogear-asset-chip').length === 3`),
+      'inline image chips after batch cleanup render',
+    );
+
+    const interactionState = await sideValue(sideClient, `({
+      cardsAreStatic: [...document.querySelectorAll('.card')].every((element) => !element.draggable),
+      groupsAreStatic: [...document.querySelectorAll('.group')].every((element) => !element.draggable),
+      handlesAreDraggable: [...document.querySelectorAll('.drag-handle')].every((element) => element.draggable),
+      imageIsDraggable: document.querySelector('.context-images img')?.draggable === true,
+      textIsSelectable: getComputedStyle(document.querySelector('blockquote')).userSelect === 'text',
+      inlineChipsAreThumbnailOnly: [...document.querySelectorAll('.dogear-asset-chip')]
+        .every((chip) => chip.children.length === 2 && !chip.querySelector(':scope > span')),
+      inlineChipShowsFullNameOnHover: [...document.querySelectorAll('.dogear-asset-chip')]
+        .every((chip) => chip.title === chip.dataset.label && chip.querySelector('img')?.title === chip.dataset.label),
+    })`);
+    if (Object.values(interactionState).some((value) => !value)) {
+      throw new Error(`Queue interaction regression: ${JSON.stringify(interactionState)}`);
+    }
+
+    const inlineReorder = await sideValue(sideClient, `(async () => {
+      const editor = document.querySelector('.dogear-composer');
+      const chip = editor.querySelector('.dogear-asset-chip');
+      const movedAssetId = chip.dataset.assetId;
+      const suffix = document.createTextNode(' sadsa');
+      editor.appendChild(suffix);
+      const range = document.createRange();
+      range.setStart(suffix, suffix.data.length);
+      range.collapse(true);
+      const original = document.caretRangeFromPoint;
+      document.caretRangeFromPoint = () => range;
+      const transfer = new DataTransfer();
+      chip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
+      const dragAtSuffix = {
+        bubbles: true,
+        cancelable: true,
+        clientX: 1,
+        clientY: 1,
+        dataTransfer: transfer,
+      };
+      editor.dispatchEvent(new DragEvent('dragover', dragAtSuffix));
+      const insertionCaretShown = !!editor.querySelector('.dogear-inline-drop-caret');
+      editor.dispatchEvent(new DragEvent('drop', dragAtSuffix));
+      document.caretRangeFromPoint = original;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      let queue = await getQueue();
+      let parts = queue[0].message.parts;
+      const movedAfterSuffix = parts.at(-1)?.type === 'asset' &&
+        parts.at(-1)?.assetId === movedAssetId && parts.at(-2)?.text.endsWith('sadsa');
+
+      const movedChip = editor.querySelector('[data-asset-id="' + movedAssetId + '"]');
+      const targetChip = [...editor.querySelectorAll('.dogear-asset-chip')]
+        .find((candidate) => candidate !== movedChip);
+      const targetRect = targetChip.getBoundingClientRect();
+      const secondTransfer = new DataTransfer();
+      movedChip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: secondTransfer }));
+      const dragOnImage = {
+        bubbles: true,
+        cancelable: true,
+        clientX: targetRect.left + 1,
+        clientY: targetRect.top + targetRect.height / 2,
+        dataTransfer: secondTransfer,
+      };
+      targetChip.dispatchEvent(new DragEvent('dragover', dragOnImage));
+      const imageCaret = editor.querySelector('.dogear-inline-drop-caret');
+      const caretBesideTarget = imageCaret?.nextSibling === targetChip || imageCaret?.previousSibling === targetChip;
+      targetChip.dispatchEvent(new DragEvent('drop', dragOnImage));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      queue = await getQueue();
+      parts = queue[0].message.parts;
+      const assetParts = parts.filter((part) => part.type === 'asset');
+      return {
+        chipIsDraggable: chip.draggable,
+        insertionCaretShown,
+        movedAfterSuffix,
+        caretBesideTarget,
+        dropOnImagePreserved: assetParts.length === 3 &&
+          new Set(assetParts.map((part) => part.assetId)).size === 3 &&
+          editor.querySelectorAll('.dogear-asset-chip .dogear-asset-chip').length === 0,
+      };
+    })()`);
+    if (Object.values(inlineReorder).some((value) => !value)) {
+      throw new Error(`Inline asset reorder regression: ${JSON.stringify(inlineReorder)}`);
+    }
+
+    await sideValue(sideClient, `document.querySelector('#ask-page').click()`);
+    await waitFor(
+      () => page.evaluate(() => {
+        const shadow = document.querySelector('#dogear-host')?.shadowRoot;
+        return shadow?.querySelector('.popover')?.style.display === 'block' &&
+          shadow.querySelector('.excerpt')?.textContent.includes('no selection');
+      }),
+      'whole-page question popover',
+    );
+    await page.evaluate(() => {
+      const shadow = document.querySelector('#dogear-host').shadowRoot;
+      const editor = shadow.querySelector('.question');
+      editor.textContent = 'Summarize this whole page.';
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+      shadow.querySelector('.add').click();
+    });
+    await waitFor(
+      () => sideValue(sideClient, `(async () => {
+        const queue = await getQueue();
+        return queue.length === 4 && DOGEAR_MODEL.locatorOf(queue[3]).type === 'unanchored' && document.querySelector('#count').textContent === '4 queries';
+      })()`),
+      'whole-page question in the visible queue',
+    );
+    report.push({
+      label: 'Queue synchronization and content interaction',
+      handoffRows: 3,
+      visibleQueries: 4,
+      ...interactionState,
+      batchImagesPersisted: batchPersistence.allPersisted,
+      ...inlineReorder,
+      askPage: true,
+    });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);
 
     async function attachedState() {
@@ -193,6 +383,7 @@ async function main() {
       await recordStep(`${label}: ${expected} attached row${expected === 1 ? '' : 's'}`);
     }
 
+    await recordStep('PASS: 4 questions rendered, inline image moved, whole-page ask added');
     await recordStep('ChatGPT-style fixture: ready to attach three images');
     await sideValue(sideClient, `document.querySelector('.handoff-all').click()`);
     await expectAttached(3, 'ChatGPT attach-all');

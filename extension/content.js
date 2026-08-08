@@ -239,7 +239,7 @@
         content: attr(data-placeholder); color: ${T.colors.textFaint}; pointer-events: none;
       }
       .dogear-asset-chip {
-        display: inline-flex; align-items: center; max-width: 180px; gap: 4px;
+        display: inline-flex; align-items: center; gap: 4px;
         margin: 1px 3px; padding: 2px 4px; border: 1px solid ${T.colors.borderStrong};
         border-radius: 5px; background: ${T.colors.groupBg}; vertical-align: middle;
         color: ${T.colors.textMuted}; font-size: 11px;
@@ -247,7 +247,11 @@
       .dogear-asset-chip img {
         width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
       }
-      .dogear-asset-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dogear-inline-drop-caret {
+        display: inline-block; width: 2px; height: 1.35em; margin: 0 1px;
+        border-radius: 1px; background: ${T.colors.primary}; vertical-align: text-bottom;
+        pointer-events: none;
+      }
       .dogear-remove-asset {
         border: 0; padding: 0 2px; background: transparent; color: ${T.colors.textFaint}; cursor: pointer;
       }
@@ -516,6 +520,17 @@
     composer.setParts([]).then(() => composer.focus());
   }
 
+  function openPagePopover() {
+    closePopover();
+    const source = sourceReference();
+    savedCapture = { kind: 'page', source };
+    excerptEl.replaceChildren();
+    excerptEl.textContent = 'Asking about this page — no selection';
+    positionNear(popover, { bottom: 18, left: Math.max(18, window.innerWidth - 380) });
+    popover.style.display = 'block';
+    composer.setParts([]).then(() => composer.focus());
+  }
+
   function closePopover() {
     popover.style.display = 'none';
     savedCapture = null;
@@ -646,6 +661,14 @@
       });
       await addQueueItem(item, cap.source.url);
       return;
+    } else if (cap.kind === 'page') {
+      const item = M.createPageRequest({
+        id: crypto.randomUUID(),
+        source: cap.source,
+        messageParts,
+      });
+      await addQueueItem(item, cap.source.url, cap);
+      return;
     } else if (cap.kind === 'range') {
       anchor = makeAnchor(cap.range);
       // In the bundled PDF.js viewer, record which PDF page the selection is on.
@@ -773,6 +796,10 @@
     if (msg && msg.type === 'dogear-start-region') {
       attachHost();
       startRegionCapture();
+    }
+    if (msg && msg.type === 'dogear-open-page-ask') {
+      attachHost();
+      openPagePopover();
     }
   });
 
