@@ -43,12 +43,14 @@ async function getQueue() {
 
 async function setQueue(queue) {
   queueCache = queue;
+  syncManualHandoff(buildAssetPlan(queue));
   vscodeApi.postMessage({ type: 'save', queue });
   render();
 }
 
 function saveQueueWithoutRender(queue) {
   queueCache = queue;
+  syncManualHandoff(buildAssetPlan(queue));
   vscodeApi.postMessage({ type: 'save', queue });
 }
 
@@ -70,6 +72,7 @@ window.addEventListener('message', (e) => {
       }));
     }
     assetPreviews = msg.assets || {};
+    syncManualHandoff(buildAssetPlan(queueCache));
     if (msg.promptLang && globalThis.DOGEAR_PROMPTS[msg.promptLang]) {
       promptLang = msg.promptLang;
       langSelect.value = promptLang;
@@ -580,10 +583,11 @@ function renderManualHandoff() {
   });
 }
 
-function showManualHandoff(assets) {
+function syncManualHandoff(assets) {
+  const firstImages = !manualHandoffAssets.length && assets.length;
   manualHandoffAssets = assets;
   renderManualHandoff();
-  handoffEl.open = true;
+  if (firstImages) handoffEl.open = false;
 }
 
 function renderParts(parts, labels) {
@@ -656,7 +660,6 @@ async function composeOrWarn() {
 document.getElementById('copy').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'copy',
     prompt: prompt.text,
@@ -667,7 +670,6 @@ document.getElementById('copy').addEventListener('click', async () => {
 document.getElementById('to-claude').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'send',
     target: 'claude',
@@ -679,7 +681,6 @@ document.getElementById('to-claude').addEventListener('click', async () => {
 document.getElementById('to-codex').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'send',
     target: 'codex',

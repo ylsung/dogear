@@ -194,6 +194,8 @@ async function main() {
     })), { queue, previews });
     await page.locator('.card[data-id="q3"] .context-images img').waitFor();
     assert.equal(await page.locator('.card[data-id="q2"] .dogear-asset-chip').count(), 3);
+    assert.equal(await page.locator('#manual-handoff').isHidden(), false);
+    assert.equal(await page.locator('#manual-handoff').getAttribute('open'), null);
 
     await page.evaluate(() => {
       document.querySelector('.card[data-id="q2"]').dataset.mountMarker = 'stable';
@@ -206,6 +208,8 @@ async function main() {
       'stable',
     );
 
+    await page.locator('#manual-summary').click();
+    await page.locator('.handoff-all').waitFor();
     await page.locator('#copy').click();
     const copied = await page.evaluate(() =>
       window.__hostMessages.findLast((message) => message.type === 'copy'));
@@ -213,7 +217,6 @@ async function main() {
     assert.match(copied.prompt, /First line\nSecond line/);
     assert.match(copied.prompt, /\[Image I1\]/);
     assert.match(copied.prompt, /Selected context: \[Image I1\]/);
-    await page.locator('#manual-handoff').waitFor();
     assert.equal(await page.locator('.handoff-asset').count(), 3);
     await page.locator('.handoff-all').click();
     await page.locator('.handoff-all:not(:disabled)').waitFor();
@@ -233,12 +236,11 @@ async function main() {
     for (const [button, target] of [['#to-claude', 'claude'], ['#to-codex', 'codex']]) {
       await page.evaluate(() => {
         const handoff = document.getElementById('manual-handoff');
-        handoff.hidden = true;
         handoff.open = false;
       });
       await page.locator(button).click();
-      await page.locator('#manual-handoff[open]').waitFor();
       assert.equal(await page.locator('#manual-handoff').isHidden(), false);
+      assert.equal(await page.locator('#manual-handoff').getAttribute('open'), null);
       assert.equal(await page.evaluate((expected) => window.__hostMessages.findLast(
         (message) => message.type === 'send')?.target, target), target);
     }
