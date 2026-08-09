@@ -50,10 +50,11 @@ the source of truth lives in `../extension/`. Edit there, rebuild here.
      Code currently exposes no file-attachment command to other extensions.
      Claude can read those files directly; sending remains explicit.
    - **Copy prompt** includes the same labeled local paths and opens a
-     **Manual handoff** tray. Its **Attach all … to Codex** button attaches the
-     complete image set in one step; Claude Code and other coding agents use
-     the copied local paths because VS Code does not let Dogear inject files
-     into another extension's private webview.
+     **Manual handoff** tray. **Attach all images to this chat** can be used
+     repeatedly, including after switching conversations. When a destination
+     does not expose an attachment command, use the copied local paths because
+     VS Code does not let Dogear inject files into another extension's private
+     webview.
 
 Image bytes live in VS Code's extension storage for the current workspace, not
 inside the queue JSON or the prompt. Orphaned files are removed when images or
@@ -84,6 +85,9 @@ line numbers in the composed prompt follow along.
   ([anthropics/claude-code#27873](https://github.com/anthropics/claude-code/issues/27873));
   Dogear therefore focuses the requested sidebar and uses VS Code's global
   clipboard command to paste. Sending remains an explicit user action.
+- Automated image handoff requires a command contributed by the destination
+  extension. Codex currently provides one; Claude Code does not, so **→ Claude
+  Code** deliberately sends labeled local paths instead of image attachments.
 - VS Code's native `showInputBox` is single-line and has no attachment model,
   so Dogear's multiline mixed-content input is implemented in its existing
   sidebar webview.
