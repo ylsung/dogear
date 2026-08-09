@@ -285,8 +285,14 @@ async function main() {
       const range = document.createRange();
       range.setStart(suffix, suffix.data.length);
       range.collapse(true);
+      const textNodesBeforeDrag = [...editor.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE).length;
       const original = document.caretRangeFromPoint;
-      document.caretRangeFromPoint = () => range;
+      let caretLookups = 0;
+      document.caretRangeFromPoint = () => {
+        caretLookups += 1;
+        return range;
+      };
       const transfer = new DataTransfer();
       chip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
       const dragAtSuffix = {
@@ -296,8 +302,14 @@ async function main() {
         clientY: 1,
         dataTransfer: transfer,
       };
-      editor.dispatchEvent(new DragEvent('dragover', dragAtSuffix));
-      const insertionCaretShown = !!editor.querySelector('.dogear-inline-drop-caret');
+      for (let i = 0; i < 20; i += 1) {
+        editor.dispatchEvent(new DragEvent('dragover', dragAtSuffix));
+      }
+      await new Promise(requestAnimationFrame);
+      const insertionCaretShown = !!document.querySelector('.dogear-inline-drop-caret');
+      const dragUpdatesCoalesced = caretLookups === 1;
+      const dragPreviewPreservedTextNodes = [...editor.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE).length === textNodesBeforeDrag;
       editor.dispatchEvent(new DragEvent('drop', dragAtSuffix));
       document.caretRangeFromPoint = original;
       await new Promise((resolve) => setTimeout(resolve, 300));
@@ -320,8 +332,9 @@ async function main() {
         dataTransfer: secondTransfer,
       };
       targetChip.dispatchEvent(new DragEvent('dragover', dragOnImage));
-      const imageCaret = editor.querySelector('.dogear-inline-drop-caret');
-      const caretBesideTarget = imageCaret?.nextSibling === targetChip || imageCaret?.previousSibling === targetChip;
+      await new Promise(requestAnimationFrame);
+      const imageCaret = document.querySelector('.dogear-inline-drop-caret');
+      const caretBesideTarget = imageCaret?.style.left === String(targetRect.left) + 'px';
       targetChip.dispatchEvent(new DragEvent('drop', dragOnImage));
       await new Promise((resolve) => setTimeout(resolve, 300));
       queue = await getQueue();
@@ -333,6 +346,8 @@ async function main() {
       return {
         chipIsDraggable: chip.draggable,
         insertionCaretShown,
+        dragUpdatesCoalesced,
+        dragPreviewPreservedTextNodes,
         movedAfterSuffix,
         caretBesideTarget,
         dropOnImagePreserved,
@@ -532,13 +547,16 @@ async function main() {
         dataTransfer: transfer,
       };
       editor.dispatchEvent(new DragEvent('dragover', dragAtText));
-      const insertionCaretShown = !!editor.querySelector('.dogear-inline-drop-caret');
+      await new Promise(requestAnimationFrame);
+      const insertionCaretShown = !!shadow.querySelector('.dogear-inline-drop-caret');
+      const dragPreviewPreservedTextNode = text.isConnected && text.data.length > 0;
       editor.dispatchEvent(new DragEvent('drop', dragAtText));
       await new Promise((resolve) => setTimeout(resolve, 50));
       const children = [...editor.childNodes];
       const chipIndex = children.indexOf(chip);
       return {
         insertionCaretShown,
+        dragPreviewPreservedTextNode,
         textBeforeImage: children.slice(0, chipIndex).some((node) => node.textContent.length > 0),
         textAfterImage: children.slice(chipIndex + 1).some((node) => node.textContent.length > 0),
       };

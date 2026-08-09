@@ -249,9 +249,9 @@
         width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
       }
       .dogear-inline-drop-caret {
-        display: inline-block; width: 2px; height: 1.35em; margin: 0 1px;
-        border-radius: 1px; background: ${T.colors.primary}; vertical-align: text-bottom;
-        pointer-events: none;
+        position: fixed; display: block; width: 2px; margin: 0;
+        border-radius: 1px; background: ${T.colors.primary};
+        pointer-events: none; z-index: 2147483647;
       }
       .dogear-remove-asset {
         border: 0; padding: 0 2px; background: transparent; color: ${T.colors.textFaint}; cursor: pointer;
