@@ -96,9 +96,9 @@ The same select-and-queue workflow, inside your editor, sending batches to
 5. Deliver the batch:
    - **→ Codex** attaches queued images and pastes the composed prompt.
    - **→ Claude Code** pastes the prompt with local paths that Claude can read.
-   - **Copy prompt**, **→ Claude Code**, and **→ Codex** open a repeatable
-     **Manual handoff** tray whenever images are present, with **Attach all
-     images to this chat**. Dogear never sends on your behalf.
+   - A folded **Manual handoff** tray appears whenever queued images are present
+     and stays available for **Copy prompt**, **→ Claude Code**, and **→ Codex**,
+     with **Attach all images to this chat**. Dogear never sends on your behalf.
 
 It also supports capturing selections from VS Code's Markdown preview and from
 the Codex/Claude Code chat webviews via right-click, though those captures are
