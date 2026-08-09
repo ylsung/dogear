@@ -56,13 +56,22 @@ window.addEventListener('message', (e) => {
   const msg = e.data;
   if (msg.type === 'state') {
     const structureChanged = queueStructure(queueCache) !== queueStructure(msg.queue);
-    queueCache = msg.queue;
+    if (structureChanged) {
+      queueCache = msg.queue;
+    } else {
+      const localMessages = new Map(queueCache.map((item) => [item.id, item.message]));
+      queueCache = msg.queue.map((item) => ({
+        ...item,
+        message: localMessages.get(item.id) || item.message,
+      }));
+    }
     assetPreviews = msg.assets || {};
     if (msg.promptLang && globalThis.DOGEAR_PROMPTS[msg.promptLang]) {
       promptLang = msg.promptLang;
       langSelect.value = promptLang;
     }
     document.getElementById('hotkey').textContent = msg.hotkeyHint;
+    document.getElementById('save-images').hidden = !buildAssetPlan(queueCache).length;
     if (structureChanged || !listEl.querySelector('.group')) render();
   } else if (msg.type === 'response') {
     const pending = pendingRequests.get(msg.requestId);
@@ -177,20 +186,6 @@ document.getElementById('capture-editor').addEventListener('keydown', (event) =>
 
 function truncate(s, n) {
   return s.length > n ? `${s.slice(0, n)}…` : s;
-}
-
-function messageText(item) {
-  return (item.message?.parts || [])
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text || '')
-    .join('');
-}
-
-function replaceMessageText(item, text) {
-  item.message = {
-    role: 'user',
-    parts: text ? [{ type: 'text', text }] : [],
-  };
 }
 
 // ---------- selection & drag state ----------
@@ -338,7 +333,7 @@ async function render() {
       });
       const icon = document.createElement('span');
       icon.className = 'favicon';
-      icon.textContent = '📄';
+      icon.textContent = item.surface === 'image' ? '🖼️' : '📄';
       const label = document.createElement('span');
       label.textContent = item.title;
       src.append(icon, label);
@@ -375,10 +370,25 @@ async function render() {
     const num = document.createElement('span');
     num.className = 'num';
     num.textContent = `Q${idx + 1}`;
-    const quote = document.createElement('blockquote');
-    quote.textContent = truncate(item.anchor.exact, 220);
-    quote.title = item.anchor.exact;
-    top.append(num, quote);
+    const contextAssets = (item.selectedContext || []).filter((part) => part.type === 'asset');
+    if (contextAssets.length) {
+      const images = document.createElement('div');
+      images.className = 'context-images';
+      contextAssets.forEach((part) => {
+        const image = document.createElement('img');
+        image.src = assetPreviews[part.assetId] || '';
+        image.alt = part.label || 'Selected image';
+        image.title = part.label || 'Selected image';
+        images.appendChild(image);
+      });
+      top.append(num, images);
+    } else {
+      const quote = document.createElement('blockquote');
+      const selectedText = renderParts(item.selectedContext, new Map()) || item.anchor.exact;
+      quote.textContent = truncate(selectedText, 220);
+      quote.title = selectedText;
+      top.append(num, quote);
+    }
 
     const q = document.createElement('div');
     q.dataset.placeholder = 'Your query about this selection…';
@@ -496,9 +506,40 @@ function sourceCitation(item, P) {
   return { title: item.title, url: P.localFile || 'local file' };
 }
 
-function composePrompt(queue) {
+function safeFilename(name) {
+  return String(name || 'image')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')
+    .replace(/^\.+/, '') || 'image';
+}
+
+function buildAssetPlan(queue) {
+  const parts = queue.flatMap((item) => [
+    ...(item.selectedContext || []),
+    ...(item.message?.parts || []),
+  ]);
+  const seen = new Set();
+  return parts.flatMap((part) => {
+    if (part.type !== 'asset' || seen.has(part.assetId)) return [];
+    seen.add(part.assetId);
+    const index = seen.size;
+    return [{
+      id: part.assetId,
+      label: `Image I${index}`,
+      deliveredName: `I${index}-${safeFilename(part.label)}`,
+    }];
+  });
+}
+
+function renderParts(parts, labels) {
+  return (parts || []).map((part) =>
+    part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
+  ).join('');
+}
+
+function composePrompt(queue, assets) {
   const P = globalThis.DOGEAR_PROMPTS[promptLang] || globalThis.DOGEAR_PROMPTS.en;
   const lines = [P.header(queue.length)];
+  const labels = new Map(assets.map((asset) => [asset.id, asset.label]));
 
   let lastUrl = null;
   let sourceIdx = 0;
@@ -517,12 +558,22 @@ function composePrompt(queue) {
       : item.lines && P.lines
         ? P.lines(item.lines.start, item.lines.end)
         : '';
-    lines.push('', P.excerpt(idx + 1, where, item.anchor.exact));
+    const contextParts = item.selectedContext || [];
+    const contextText = renderParts(contextParts, labels);
+    const hasContextImage = contextParts.some((part) => part.type === 'asset');
+    lines.push('', hasContextImage
+      ? P.multimodalSelection(idx + 1, where, contextText)
+      : P.excerpt(idx + 1, where, contextText || item.anchor.exact));
     if (item.anchor.prefix || item.anchor.suffix) {
       lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
     }
-    lines.push(P.question(messageText(item)));
+    lines.push(P.question(renderParts(item.message?.parts, labels)));
   });
+
+  if (assets.length) {
+    lines.push('', P.attachmentsHeader);
+    assets.forEach((asset) => lines.push(P.attachment(asset.label, asset.deliveredName)));
+  }
 
   return lines.join('\n');
 }
@@ -536,7 +587,8 @@ async function composeOrWarn() {
   if (queue.length > SOFT_CAP) {
     note(`Heads up: ${queue.length} queries in one prompt may dilute answer quality.`);
   }
-  return composePrompt(queue);
+  const assets = buildAssetPlan(queue);
+  return { text: composePrompt(queue, assets), assets };
 }
 
 // ---------- delivery ----------
@@ -546,19 +598,39 @@ async function composeOrWarn() {
 document.getElementById('copy').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  vscodeApi.postMessage({ type: 'copy', prompt });
+  vscodeApi.postMessage({
+    type: 'copy',
+    prompt: prompt.text,
+    assetIds: prompt.assets.map((asset) => asset.id),
+  });
 });
 
 document.getElementById('to-claude').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  vscodeApi.postMessage({ type: 'send', target: 'claude', prompt });
+  vscodeApi.postMessage({
+    type: 'send',
+    target: 'claude',
+    prompt: prompt.text,
+    assetIds: prompt.assets.map((asset) => asset.id),
+  });
 });
 
 document.getElementById('to-codex').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  vscodeApi.postMessage({ type: 'send', target: 'codex', prompt });
+  vscodeApi.postMessage({
+    type: 'send',
+    target: 'codex',
+    prompt: prompt.text,
+    assetIds: prompt.assets.map((asset) => asset.id),
+  });
+});
+
+document.getElementById('save-images').addEventListener('click', async () => {
+  const assets = buildAssetPlan(await getQueue());
+  if (!assets.length) return;
+  vscodeApi.postMessage({ type: 'saveAssets', assetIds: assets.map((asset) => asset.id) });
 });
 
 document.getElementById('clear').addEventListener('click', () => {

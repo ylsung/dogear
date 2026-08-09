@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { QueueItem, QueueStore, UserMessage } from './queue';
+import { AssetStore } from './assets';
+import { assetIdsOf, QueueItem, QueueStore, UserMessage } from './queue';
 
 const CONTEXT_CHARS = 32; // same prefix/suffix window as the Chrome extension
 
@@ -70,6 +71,7 @@ export async function askWebviewSelection(
     id: itemId(),
     url: meta.url,
     title: meta.title,
+    selectedContext: [{ type: 'text', text: exact }],
     message,
     page: null,
     lines: null,
@@ -109,6 +111,7 @@ export async function askSelection(
     id: itemId(),
     url: doc.uri.toString(),
     title,
+    selectedContext: [{ type: 'text', text: exact }],
     message,
     page: null,
     lines: { start: sel.start.line + 1, end: sel.end.line + 1 },
@@ -125,4 +128,56 @@ export async function askSelection(
   };
 
   await store.add(item);
+}
+
+export async function askImageSelection(
+  store: QueueStore,
+  assets: AssetStore,
+  composer: QuestionComposer,
+  resource?: vscode.Uri,
+): Promise<void> {
+  let uri = resource;
+  if (!uri) {
+    [uri] = await vscode.window.showOpenDialog({
+      title: 'Choose an image for Dogear',
+      openLabel: 'Use image',
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'] },
+    }) || [];
+  }
+  if (!uri) return;
+
+  const asset = await assets.putUri(uri);
+  if (!asset.mediaType.startsWith('image/')) {
+    await assets.removeUnreferenced(assetIdsOf(store.get()));
+    vscode.window.showWarningMessage('Dogear: choose a PNG, JPEG, GIF, WebP, BMP, or SVG image.');
+    return;
+  }
+
+  const title = vscode.workspace.asRelativePath(uri, false);
+  const message = await composer.compose(title);
+  if (!message) {
+    await assets.removeUnreferenced(assetIdsOf(store.get()));
+    return;
+  }
+  await store.add({
+    id: itemId(),
+    url: uri.toString(),
+    title,
+    selectedContext: [{
+      type: 'asset',
+      assetId: asset.id,
+      mediaType: asset.mediaType,
+      label: asset.displayName,
+    }],
+    message,
+    page: null,
+    lines: null,
+    languageId: 'image',
+    surface: 'image',
+    createdAt: Date.now(),
+    anchor: { exact: '', prefix: '', suffix: '', start: 0, end: 0 },
+  });
 }

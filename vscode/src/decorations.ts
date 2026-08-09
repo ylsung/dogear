@@ -72,6 +72,7 @@ export class Decorations {
     let moved = false;
 
     for (const item of items) {
+      if (item.surface === 'image') continue;
       const loc = locateAnchor(doc, item.anchor);
       if (!loc) continue; // anchor lost (text deleted/rewritten): no highlight
       ranges.push(rangeFromOffsets(doc, loc));
