@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Dogear",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Collect text and screenshot selections with multimodal questions, then hand them to any AI chat.",
   "permissions": ["storage", "contextMenus", "sidePanel", "scripting", "tabs", "favicon"],
   "host_permissions": ["<all_urls>"],
