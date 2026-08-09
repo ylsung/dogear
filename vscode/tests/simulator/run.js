@@ -47,6 +47,10 @@ const fixture = `<!doctype html>
       <button id="copy">Copy prompt</button>
       <button id="to-claude">→ Claude Code</button>
       <button id="to-codex">→ Codex</button>
+    </div>
+    <div class="actions">
+      <button id="ask-tab">Ask tab</button>
+      <button id="capture-screenshot">Capture screenshot</button>
       <button id="clear">Clear</button>
     </div>
     <select id="lang"></select>
@@ -219,6 +223,12 @@ async function main() {
     await page.locator('.handoff-all').click();
     await page.waitForFunction(() => window.__hostMessages.filter(
       (message) => message.type === 'attachAssets').length === 2);
+    await page.locator('#ask-tab').click();
+    await page.locator('#capture-screenshot').click();
+    assert.ok(await page.evaluate(() => window.__hostMessages.some(
+      (message) => message.type === 'askTab')));
+    assert.ok(await page.evaluate(() => window.__hostMessages.some(
+      (message) => message.type === 'captureScreenshot')));
 
     await page.locator('.card[data-id="q2"] .dogear-remove-asset').last().click();
     await page.waitForFunction(() => window.__hostMessages.some((message) =>

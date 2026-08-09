@@ -20,6 +20,10 @@
         "title": "Dogear: Add query for image"
       },
       {
+        "command": "dogear.askTab",
+        "title": "Dogear: Ask tab without selection"
+      },
+      {
         "command": "dogear.captureScreenshot",
         "title": "Dogear: Capture screenshot and ask"
       },

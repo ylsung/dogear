@@ -617,9 +617,11 @@ function composePrompt(queue, assets) {
     const contextParts = item.selectedContext || [];
     const contextText = renderParts(contextParts, labels);
     const hasContextImage = contextParts.some((part) => part.type === 'asset');
-    lines.push('', hasContextImage
-      ? P.multimodalSelection(idx + 1, where, contextText)
-      : P.excerpt(idx + 1, where, contextText || item.anchor.exact));
+    lines.push('', !contextParts.length
+      ? P.pageQuestion(idx + 1)
+      : hasContextImage
+        ? P.multimodalSelection(idx + 1, where, contextText)
+        : P.excerpt(idx + 1, where, contextText || item.anchor.exact));
     if (item.anchor.prefix || item.anchor.suffix) {
       lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
     }
@@ -682,6 +684,14 @@ document.getElementById('to-codex').addEventListener('click', async () => {
     prompt: prompt.text,
     assetIds: prompt.assets.map((asset) => asset.id),
   });
+});
+
+document.getElementById('ask-tab').addEventListener('click', () => {
+  vscodeApi.postMessage({ type: 'askTab' });
+});
+
+document.getElementById('capture-screenshot').addEventListener('click', () => {
+  vscodeApi.postMessage({ type: 'captureScreenshot' });
 });
 
 document.getElementById('clear').addEventListener('click', () => {

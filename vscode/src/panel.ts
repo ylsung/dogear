@@ -221,6 +221,14 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       case 'send':
         await sendToSidebar(msg.target, msg.prompt, this.deliveryAssets(msg.assetIds));
         break;
+      case 'askTab':
+        // Do not await: the command opens this webview's composer, whose submit
+        // message must remain free to enter the message queue.
+        void vscode.commands.executeCommand('dogear.askTab');
+        break;
+      case 'captureScreenshot':
+        void vscode.commands.executeCommand('dogear.captureScreenshot');
+        break;
       case 'clear': {
         const n = this.store.get().length;
         if (!n) break;
@@ -248,6 +256,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       await vscode.commands.executeCommand('vscode.open', vscode.Uri.parse(item.url));
       return;
     }
+    if (item.surface === 'tab') return;
     if (item.surface === 'codex-chat') {
       await vscode.commands.executeCommand('chatgpt.openSidebar');
       return;
@@ -341,7 +350,9 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   <main id="list">
     <p class="empty" id="empty">
       Select text in any editor, press <kbd id="hotkey">…</kbd> (or right-click →
-      “Dogear: Add query for selection”), and your anchored queries collect here.
+      “Dogear: Add query for selection”). Press the hotkey without selected text,
+      or use <strong>Capture screenshot</strong> below, to ask about a screen region.
+      Use <strong>Ask tab</strong> to ask without selecting any context.
       <br /><br />
       Click a card to select it (<kbd>Shift</kbd>/<kbd>⌘</kbd>-click for several), drag to reorder.
     </p>
@@ -357,6 +368,10 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       <button id="copy" title="Copy the composed prompt to the clipboard">Copy prompt</button>
       <button id="to-claude" title="Paste the composed prompt into the Claude Code sidebar without sending">→ Claude Code</button>
       <button id="to-codex" title="Paste the composed prompt into the Codex sidebar without sending">→ Codex</button>
+    </div>
+    <div class="actions">
+      <button id="ask-tab" title="Ask about the current tab without selecting anything">Ask tab</button>
+      <button id="capture-screenshot" title="Capture a screen region and ask about it">Capture screenshot</button>
       <button id="clear" class="danger" title="Remove all queries">Clear</button>
     </div>
     <div class="lang-row">

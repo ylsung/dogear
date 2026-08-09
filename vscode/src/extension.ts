@@ -4,6 +4,7 @@ import {
   askSelection,
   askImageSelection,
   askScreenshotSelection,
+  askTab,
   askWebviewSelection,
 } from './capture';
 import { Decorations } from './decorations';
@@ -21,6 +22,7 @@ export function activate(context: vscode.ExtensionContext): void {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.commands.registerCommand('dogear.askSelection', () => askSelection(store, assets, panel)),
+    vscode.commands.registerCommand('dogear.askTab', () => askTab(store, panel)),
     vscode.commands.registerCommand('dogear.captureScreenshot', () =>
       askScreenshotSelection(store, assets, panel),
     ),

@@ -39,7 +39,7 @@ export interface QueueItem {
   page: number | null; // always null in VSCode; kept for compose parity
   lines: { start: number; end: number } | null; // 1-based; null for chat excerpts
   languageId: string;
-  surface?: 'editor' | 'image' | 'markdown-preview' | 'codex-chat' | 'claude-chat';
+  surface?: 'editor' | 'image' | 'tab' | 'markdown-preview' | 'codex-chat' | 'claude-chat';
   createdAt: number;
   anchor: Anchor;
 }
