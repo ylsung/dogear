@@ -47,6 +47,10 @@ const fixture = `<!doctype html>
       <button id="copy">Copy prompt</button>
       <button id="to-claude">→ Claude Code</button>
       <button id="to-codex">→ Codex</button>
+    </div>
+    <div class="actions">
+      <button id="ask-tab">Ask tab</button>
+      <button id="capture-screenshot">Capture screenshot</button>
       <button id="clear">Clear</button>
     </div>
     <select id="lang"></select>
@@ -190,6 +194,8 @@ async function main() {
     })), { queue, previews });
     await page.locator('.card[data-id="q3"] .context-images img').waitFor();
     assert.equal(await page.locator('.card[data-id="q2"] .dogear-asset-chip').count(), 3);
+    assert.equal(await page.locator('#manual-handoff').isHidden(), false);
+    assert.equal(await page.locator('#manual-handoff').getAttribute('open'), null);
 
     await page.evaluate(() => {
       document.querySelector('.card[data-id="q2"]').dataset.mountMarker = 'stable';
@@ -202,6 +208,8 @@ async function main() {
       'stable',
     );
 
+    await page.locator('#manual-summary').click();
+    await page.locator('.handoff-all').waitFor();
     await page.locator('#copy').click();
     const copied = await page.evaluate(() =>
       window.__hostMessages.findLast((message) => message.type === 'copy'));
@@ -209,7 +217,6 @@ async function main() {
     assert.match(copied.prompt, /First line\nSecond line/);
     assert.match(copied.prompt, /\[Image I1\]/);
     assert.match(copied.prompt, /Selected context: \[Image I1\]/);
-    await page.locator('#manual-handoff').waitFor();
     assert.equal(await page.locator('.handoff-asset').count(), 3);
     await page.locator('.handoff-all').click();
     await page.locator('.handoff-all:not(:disabled)').waitFor();
@@ -219,6 +226,24 @@ async function main() {
     await page.locator('.handoff-all').click();
     await page.waitForFunction(() => window.__hostMessages.filter(
       (message) => message.type === 'attachAssets').length === 2);
+    await page.locator('#ask-tab').click();
+    await page.locator('#capture-screenshot').click();
+    assert.ok(await page.evaluate(() => window.__hostMessages.some(
+      (message) => message.type === 'askTab')));
+    assert.ok(await page.evaluate(() => window.__hostMessages.some(
+      (message) => message.type === 'captureScreenshot')));
+
+    for (const [button, target] of [['#to-claude', 'claude'], ['#to-codex', 'codex']]) {
+      await page.evaluate(() => {
+        const handoff = document.getElementById('manual-handoff');
+        handoff.open = false;
+      });
+      await page.locator(button).click();
+      assert.equal(await page.locator('#manual-handoff').isHidden(), false);
+      assert.equal(await page.locator('#manual-handoff').getAttribute('open'), null);
+      assert.equal(await page.evaluate((expected) => window.__hostMessages.findLast(
+        (message) => message.type === 'send')?.target, target), target);
+    }
 
     await page.locator('.card[data-id="q2"] .dogear-remove-asset').last().click();
     await page.waitForFunction(() => window.__hostMessages.some((message) =>

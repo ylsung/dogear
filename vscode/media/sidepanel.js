@@ -43,12 +43,14 @@ async function getQueue() {
 
 async function setQueue(queue) {
   queueCache = queue;
+  syncManualHandoff(buildAssetPlan(queue));
   vscodeApi.postMessage({ type: 'save', queue });
   render();
 }
 
 function saveQueueWithoutRender(queue) {
   queueCache = queue;
+  syncManualHandoff(buildAssetPlan(queue));
   vscodeApi.postMessage({ type: 'save', queue });
 }
 
@@ -70,6 +72,7 @@ window.addEventListener('message', (e) => {
       }));
     }
     assetPreviews = msg.assets || {};
+    syncManualHandoff(buildAssetPlan(queueCache));
     if (msg.promptLang && globalThis.DOGEAR_PROMPTS[msg.promptLang]) {
       promptLang = msg.promptLang;
       langSelect.value = promptLang;
@@ -580,10 +583,11 @@ function renderManualHandoff() {
   });
 }
 
-function showManualHandoff(assets) {
+function syncManualHandoff(assets) {
+  const firstImages = !manualHandoffAssets.length && assets.length;
   manualHandoffAssets = assets;
   renderManualHandoff();
-  handoffEl.open = true;
+  if (firstImages) handoffEl.open = false;
 }
 
 function renderParts(parts, labels) {
@@ -617,9 +621,11 @@ function composePrompt(queue, assets) {
     const contextParts = item.selectedContext || [];
     const contextText = renderParts(contextParts, labels);
     const hasContextImage = contextParts.some((part) => part.type === 'asset');
-    lines.push('', hasContextImage
-      ? P.multimodalSelection(idx + 1, where, contextText)
-      : P.excerpt(idx + 1, where, contextText || item.anchor.exact));
+    lines.push('', !contextParts.length
+      ? P.pageQuestion(idx + 1)
+      : hasContextImage
+        ? P.multimodalSelection(idx + 1, where, contextText)
+        : P.excerpt(idx + 1, where, contextText || item.anchor.exact));
     if (item.anchor.prefix || item.anchor.suffix) {
       lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
     }
@@ -654,7 +660,6 @@ async function composeOrWarn() {
 document.getElementById('copy').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
-  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'copy',
     prompt: prompt.text,
@@ -682,6 +687,14 @@ document.getElementById('to-codex').addEventListener('click', async () => {
     prompt: prompt.text,
     assetIds: prompt.assets.map((asset) => asset.id),
   });
+});
+
+document.getElementById('ask-tab').addEventListener('click', () => {
+  vscodeApi.postMessage({ type: 'askTab' });
+});
+
+document.getElementById('capture-screenshot').addEventListener('click', () => {
+  vscodeApi.postMessage({ type: 'captureScreenshot' });
 });
 
 document.getElementById('clear').addEventListener('click', () => {

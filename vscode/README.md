@@ -30,6 +30,9 @@ the source of truth lives in `../extension/`. Edit there, rebuild here.
    - Press the same hotkey without selected text to capture a screen region on
      local macOS, then ask about the screenshot. On Windows, Linux, and remote
      extension hosts, Dogear opens the image picker as the fallback.
+   - Use **Ask tab** at the bottom of the sidebar to ask about the active tab
+     without selecting context, or **Capture screenshot** to start the same
+     screen-region workflow without a hotkey.
    - Right-click a PNG, JPEG, GIF, WebP, BMP, or SVG file in the Explorer or
      editor title → **Dogear: Add query for image**.
 2. Dogear opens a composer in its sidebar. Enter as many lines as needed, then
@@ -49,12 +52,13 @@ the source of truth lives in `../extension/`. Edit there, rebuild here.
    - **→ Claude Code** pastes the prompt with local image paths because Claude
      Code currently exposes no file-attachment command to other extensions.
      Claude can read those files directly; sending remains explicit.
-   - **Copy prompt** includes the same labeled local paths and opens a
-     **Manual handoff** tray. **Attach all images to this chat** can be used
-     repeatedly, including after switching conversations. When a destination
-     does not expose an attachment command, use the copied local paths because
-     VS Code does not let Dogear inject files into another extension's private
-     webview.
+   - As soon as the queue contains an image, a folded **Manual handoff** tray
+     appears above the delivery buttons and remains available for **Copy
+     prompt**, **→ Claude Code**, and **→ Codex**. **Attach all images to this
+     chat** can be used repeatedly, including after switching conversations.
+     When a destination does not expose an attachment command, use the copied
+     local paths because VS Code does not let Dogear inject files into another
+     extension's private webview.
 
 Image bytes live in VS Code's extension storage for the current workspace, not
 inside the queue JSON or the prompt. Orphaned files are removed when images or
@@ -80,6 +84,8 @@ line numbers in the composed prompt follow along.
 
 - The queue lives in the workspace, so questions about repo A never show up
   while you're in repo B.
+- Starting a question from the hotkey always reveals and focuses the Dogear
+  sidebar, even if its webview was already loaded behind another sidebar.
 - Neither the Claude Code nor Codex VSCode extensions currently exposes its
   text composer directly
   ([anthropics/claude-code#27873](https://github.com/anthropics/claude-code/issues/27873));

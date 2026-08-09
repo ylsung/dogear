@@ -135,6 +135,34 @@ export async function askSelection(
   await store.add(item);
 }
 
+export async function askTab(
+  store: QueueStore,
+  composer: QuestionComposer,
+): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+  const title = editor
+    ? vscode.workspace.asRelativePath(editor.document.uri)
+    : activeTab?.label || 'VS Code tab';
+  const message = await composer.compose(title);
+  if (!message) return;
+
+  const offset = editor ? editor.document.offsetAt(editor.selection.active) : 0;
+  await store.add({
+    id: itemId(),
+    url: editor?.document.uri.toString() || 'dogear-tab://current',
+    title,
+    selectedContext: [],
+    message,
+    page: null,
+    lines: null,
+    languageId: editor?.document.languageId || 'plaintext',
+    surface: editor ? 'editor' : 'tab',
+    createdAt: Date.now(),
+    anchor: { exact: '', prefix: '', suffix: '', start: offset, end: offset },
+  });
+}
+
 function captureMacRegion(destination: vscode.Uri): Promise<boolean> {
   return new Promise((resolve) => {
     execFile(
