@@ -506,6 +506,13 @@ async function main() {
       }),
       'initial on-page attachment thumbnail',
     );
+    const onPageChipCursor = await page.evaluate(() => {
+      const chip = document.querySelector('#dogear-host').shadowRoot.querySelector('.dogear-asset-chip');
+      return getComputedStyle(chip).cursor;
+    });
+    if (onPageChipCursor !== 'grab') {
+      throw new Error(`On-page image cursor regression: ${onPageChipCursor}`);
+    }
     const onPageInlineReorder = await page.evaluate(async () => {
       const shadow = document.querySelector('#dogear-host').shadowRoot;
       const editor = shadow.querySelector('.question');

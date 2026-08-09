@@ -242,8 +242,9 @@
         display: inline-flex; align-items: center; gap: 4px;
         margin: 1px 3px; padding: 2px 4px; border: 1px solid ${T.colors.borderStrong};
         border-radius: 5px; background: ${T.colors.groupBg}; vertical-align: middle;
-        color: ${T.colors.textMuted}; font-size: 11px;
+        color: ${T.colors.textMuted}; font-size: 11px; cursor: grab;
       }
+      .dogear-asset-chip:active { cursor: grabbing; }
       .dogear-asset-chip img {
         width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
       }
