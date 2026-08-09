@@ -48,9 +48,8 @@ queue model:
      panel opens a **Manual handoff** tray containing matching, labeled images.
      Open the destination chat in the active tab and choose **Attach all images to
      this tab**, or use the individual **Attach** and **Save** controls.
-     Successfully attached images turn green. Dogear returns tracked images to
-     neutral when their destination chips are removed; use **Reset attachment
-     status** when a site's custom uploader cannot be observed.
+     The controls remain neutral and reusable after each attempt, so you can
+     switch chats and attach the same image set again.
 
 Images are kept in extension-local storage while you collect and edit questions.
 Dogear only hands them to a website when you choose a delivery or attachment
