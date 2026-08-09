@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// End-to-end Dogear attachment-status simulator. Dependencies are intentionally
+// End-to-end Dogear image-handoff simulator. Dependencies are intentionally
 // external to the extension; set DOGEAR_SIM_NODE_MODULES or use the default
 // isolated /tmp setup described in this task's review notes.
 
@@ -113,7 +113,7 @@ async function main() {
       figcaption { padding: 6px 10px; background: #1e293b; font-weight: 600; }
       img { width: 100%; flex: 1; min-height: 0; object-fit: contain; background: white; }
     </style>
-    <header><h1>Dogear multimodal attachment-status test</h1><div id="caption"></div></header>
+    <header><h1>Dogear multimodal image-handoff test</h1><div id="caption"></div></header>
     <main>
       <figure><figcaption>Simulated destination chat</figcaption><img id="chat" /></figure>
       <figure><figcaption>Real Dogear side panel</figcaption><img id="dogear" /></figure>
@@ -591,10 +591,6 @@ async function main() {
     });
     await sideValue(sideClient, `document.querySelector('#manual-handoff').open = true`);
 
-    async function attachedState() {
-      return sideValue(sideClient, `[...document.querySelectorAll('.handoff-asset')].map((row) => ({ attached: row.classList.contains('attached'), label: row.querySelector('span')?.textContent }))`);
-    }
-
     async function recordStep(caption) {
       const chat = await page.screenshot({ type: 'png' });
       const dogear = Buffer.from((await sideClient.Page.captureScreenshot({ format: 'png' })).data, 'base64');
@@ -606,38 +602,40 @@ async function main() {
       await reviewPage.waitForTimeout(1200);
     }
 
-    async function expectAttached(expected, label) {
-      const state = await waitFor(async () => {
-        const value = await attachedState();
-        return value.filter((entry) => entry.attached).length === expected ? value : null;
-      }, `${expected} attached rows for ${label}`);
-      report.push({ label, attached: state.map((entry) => entry.attached) });
-      await recordStep(`${label}: ${expected} attached row${expected === 1 ? '' : 's'}`);
+    async function expectNeutralHandoff(label) {
+      const state = await sideValue(sideClient, `({
+        attachedRows: document.querySelectorAll('.handoff-asset.attached').length,
+        attachedButton: document.querySelector('.handoff-all').classList.contains('attached'),
+        resetButton: !!document.querySelector('.handoff-reset'),
+        labels: [...document.querySelectorAll('.handoff-asset span')].map((item) => item.textContent),
+      })`);
+      const neutral = state.attachedRows === 0 && !state.attachedButton &&
+        !state.resetButton && state.labels.every((item) => !item.startsWith('✓'));
+      if (!neutral) throw new Error(`Handoff status styling returned for ${label}: ${JSON.stringify(state)}`);
+      report.push({ label, neutral: true });
     }
 
     await recordStep('PASS: 4 questions rendered, inline image moved, whole-page ask added');
     await recordStep('ChatGPT-style fixture: ready to attach three images');
+    await expectNeutralHandoff('ChatGPT before attach');
     await sideValue(sideClient, `document.querySelector('.handoff-all').click()`);
-    await expectAttached(3, 'ChatGPT attach-all');
-    await page.locator('.attachment').nth(1).locator('button').click();
-    await expectAttached(2, 'ChatGPT remove middle image first');
-    await page.locator('.attachment').nth(0).locator('button').click();
-    await expectAttached(1, 'ChatGPT remove first remaining image');
-    await page.locator('.attachment').nth(0).locator('button').click();
-    await expectAttached(0, 'ChatGPT remove final image');
+    await waitFor(() => page.locator('.attachment').count().then((count) => count === 3), 'three ChatGPT attachments');
+    await expectNeutralHandoff('ChatGPT after attach');
+    await sideValue(sideClient, `document.querySelector('.handoff-all').click()`);
+    await waitFor(() => page.locator('.attachment').count().then((count) => count === 3), 'three repeat ChatGPT attachments');
+    await expectNeutralHandoff('ChatGPT repeated attach');
+    await recordStep('PASS: ChatGPT attach-all remains neutral and repeatable');
 
     await page.goto(`http://127.0.0.1:${fixturePort}/chat.html?target=claude`);
-    await waitFor(async () => (await attachedState()).every((entry) => !entry.attached), 'navigation status reset');
     await recordStep('Claude-style fixture: anonymous chips and asynchronous replacement');
+    await expectNeutralHandoff('Claude before attach');
     await sideValue(sideClient, `document.querySelector('.handoff-all').click()`);
-    await expectAttached(3, 'Claude attach-all');
-    await page.locator('.file-preview').nth(1).locator('button').click();
-    await expectAttached(2, 'Claude remove middle image first');
-    await page.locator('.file-preview').nth(0).locator('button').click();
-    await expectAttached(1, 'Claude remove first remaining image');
-    await page.locator('.file-preview').nth(0).locator('button').click();
-    await expectAttached(0, 'Claude remove final image');
-    await recordStep('PASS: both adapters tracked arbitrary removal order');
+    await waitFor(() => page.locator('.file-preview').count().then((count) => count === 3), 'three Claude attachments');
+    await expectNeutralHandoff('Claude after attach');
+    await sideValue(sideClient, `document.querySelector('.handoff-all').click()`);
+    await waitFor(() => page.locator('.file-preview').count().then((count) => count === 3), 'three repeat Claude attachments');
+    await expectNeutralHandoff('Claude repeated attach');
+    await recordStep('PASS: both adapters stay neutral and support repeated handoff');
 
     fs.writeFileSync(reportPath, `${JSON.stringify({ passed: true, steps: report }, null, 2)}\n`);
   } catch (error) {
