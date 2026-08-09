@@ -27,6 +27,9 @@ the source of truth lives in `../extension/`. Edit there, rebuild here.
 1. Choose the context:
    - Select text in any editor → press `⌃⌥Q` (Mac) / `Ctrl+Alt+Q`
      (Windows/Linux), or right-click → **Dogear: Add query for selection**.
+   - Press the same hotkey without selected text to capture a screen region on
+     local macOS, then ask about the screenshot. On Windows, Linux, and remote
+     extension hosts, Dogear opens the image picker as the fallback.
    - Right-click a PNG, JPEG, GIF, WebP, BMP, or SVG file in the Explorer or
      editor title → **Dogear: Add query for image**.
 2. Dogear opens a composer in its sidebar. Enter as many lines as needed, then
@@ -46,14 +49,17 @@ the source of truth lives in `../extension/`. Edit there, rebuild here.
    - **→ Claude Code** pastes the prompt with local image paths because Claude
      Code currently exposes no file-attachment command to other extensions.
      Claude can read those files directly; sending remains explicit.
-   - **Copy prompt** includes the same labeled local paths for other coding
-     agents. Use **Save images…** to export every queued image into one chosen
-     folder when the destination cannot read extension storage.
+   - **Copy prompt** includes the same labeled local paths and opens a
+     **Manual handoff** tray. **Attach all images to this chat** can be used
+     repeatedly, including after switching conversations. When a destination
+     does not expose an attachment command, use the copied local paths because
+     VS Code does not let Dogear inject files into another extension's private
+     webview.
 
 Image bytes live in VS Code's extension storage for the current workspace, not
 inside the queue JSON or the prompt. Orphaned files are removed when images or
 questions are deleted. Dogear only gives a destination access when you choose a
-delivery, copy, or save action.
+delivery or copy action.
 
 ### Markdown previews and AI chat views
 
@@ -79,9 +85,16 @@ line numbers in the composed prompt follow along.
   ([anthropics/claude-code#27873](https://github.com/anthropics/claude-code/issues/27873));
   Dogear therefore focuses the requested sidebar and uses VS Code's global
   clipboard command to paste. Sending remains an explicit user action.
+- Automated image handoff requires a command contributed by the destination
+  extension. Codex currently provides one; Claude Code does not, so **→ Claude
+  Code** deliberately sends labeled local paths instead of image attachments.
 - VS Code's native `showInputBox` is single-line and has no attachment model,
   so Dogear's multiline mixed-content input is implemented in its existing
   sidebar webview.
+- VS Code exposes neither screen-region capture nor binary clipboard access to
+  extensions. Dogear therefore uses macOS's interactive `screencapture` tool
+  locally; other platforms and remote workspaces fall back to choosing an
+  existing screenshot.
 
 ## Multimodal simulator
 
@@ -93,5 +106,5 @@ node vscode/tests/simulator/run.js
 
 See [`tests/simulator/README.md`](tests/simulator/README.md) for its external
 Playwright dependency. The simulator covers multiline input, three-image
-attachment, stable queue synchronization, selected-image context, and prompt
-labels without writing repository artifacts.
+attachment, stable queue synchronization, selected-image context, prompt
+labels, and attach-all manual handoff without writing repository artifacts.

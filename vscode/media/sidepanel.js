@@ -19,6 +19,9 @@ const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
 const countEl = document.getElementById('count');
 const noteEl = document.getElementById('note');
+const handoffEl = document.getElementById('manual-handoff');
+const handoffSummaryEl = document.getElementById('manual-summary');
+const handoffAssetsEl = document.getElementById('manual-assets');
 
 const SOFT_CAP = 10;
 
@@ -32,6 +35,7 @@ let queueCache = [];
 let assetPreviews = {};
 let requestSequence = 0;
 const pendingRequests = new Map();
+let manualHandoffAssets = [];
 
 async function getQueue() {
   return queueCache;
@@ -71,7 +75,6 @@ window.addEventListener('message', (e) => {
       langSelect.value = promptLang;
     }
     document.getElementById('hotkey').textContent = msg.hotkeyHint;
-    document.getElementById('save-images').hidden = !buildAssetPlan(queueCache).length;
     if (structureChanged || !listEl.querySelector('.group')) render();
   } else if (msg.type === 'response') {
     const pending = pendingRequests.get(msg.requestId);
@@ -530,6 +533,59 @@ function buildAssetPlan(queue) {
   });
 }
 
+function renderManualHandoff() {
+  const assets = manualHandoffAssets;
+  handoffEl.hidden = !assets.length;
+  handoffAssetsEl.replaceChildren();
+  if (!assets.length) return;
+
+  handoffSummaryEl.textContent = `Manual handoff · ${assets.length} ${assets.length === 1 ? 'image' : 'images'}`;
+  const attachAll = document.createElement('button');
+  attachAll.className = 'handoff-all';
+  attachAll.textContent = 'Attach all images to this chat';
+  attachAll.addEventListener('click', async () => {
+    attachAll.disabled = true;
+    try {
+      const result = await requestHost('attachAssets', {
+        assetIds: assets.map((asset) => asset.id),
+      });
+      if (result.unavailable) {
+        note('This chat does not expose an image attachment command. Use the local paths in the copied prompt.');
+      } else {
+        const attached = (result.attachedIds || []).length;
+        const failed = assets.length - attached;
+        note(failed
+          ? `${attached} attached; ${failed} ${failed === 1 ? 'image' : 'images'} could not be attached.`
+          : `${attached} ${attached === 1 ? 'image' : 'images'} attached. You can attach them again after switching chats.`);
+      }
+    } catch (error) {
+      note(error.message || 'Could not attach images to this chat.');
+    } finally {
+      attachAll.disabled = false;
+    }
+  });
+  handoffAssetsEl.appendChild(attachAll);
+
+  assets.forEach((asset) => {
+    const row = document.createElement('div');
+    row.className = 'handoff-asset';
+    const img = document.createElement('img');
+    img.src = assetPreviews[asset.id] || '';
+    img.alt = '';
+    const label = document.createElement('span');
+    label.textContent = `${asset.label} · ${asset.deliveredName}`;
+    label.title = asset.deliveredName;
+    row.append(img, label);
+    handoffAssetsEl.appendChild(row);
+  });
+}
+
+function showManualHandoff(assets) {
+  manualHandoffAssets = assets;
+  renderManualHandoff();
+  handoffEl.open = true;
+}
+
 function renderParts(parts, labels) {
   return (parts || []).map((part) =>
     part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
@@ -598,6 +654,7 @@ async function composeOrWarn() {
 document.getElementById('copy').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
+  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'copy',
     prompt: prompt.text,
@@ -625,12 +682,6 @@ document.getElementById('to-codex').addEventListener('click', async () => {
     prompt: prompt.text,
     assetIds: prompt.assets.map((asset) => asset.id),
   });
-});
-
-document.getElementById('save-images').addEventListener('click', async () => {
-  const assets = buildAssetPlan(await getQueue());
-  if (!assets.length) return;
-  vscodeApi.postMessage({ type: 'saveAssets', assetIds: assets.map((asset) => asset.id) });
 });
 
 document.getElementById('clear').addEventListener('click', () => {

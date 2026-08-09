@@ -20,6 +20,10 @@
         "title": "Dogear: Add query for image"
       },
       {
+        "command": "dogear.captureScreenshot",
+        "title": "Dogear: Capture screenshot and ask"
+      },
+      {
         "command": "dogear.askCodexSelection",
         "title": "Dogear: Add selected Codex text"
       },

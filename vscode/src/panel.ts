@@ -5,7 +5,7 @@ import { QueueStore, QueueItem, UserMessage, assetIdsOf, coalesceParts } from '.
 import { AssetStore } from './assets';
 import { Decorations } from './decorations';
 import { locateAnchor, rangeFromOffsets } from './anchors';
-import { copyPrompt, DeliveryAsset, sendToSidebar } from './send';
+import { attachToCodex, copyPrompt, DeliveryAsset, sendToSidebar } from './send';
 
 export class DogearPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dogear.queue';
@@ -52,8 +52,11 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     this.pushState();
   }
 
-  async compose(title: string): Promise<UserMessage | undefined> {
-    if (this.pendingComposition) await this.cancelComposition();
+  async compose(
+    title: string,
+    retainedAssetIds: readonly string[] = [],
+  ): Promise<UserMessage | undefined> {
+    if (this.pendingComposition) await this.cancelComposition(retainedAssetIds);
     try {
       await this.reveal();
     } catch {
@@ -61,7 +64,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       return undefined;
     }
     return new Promise((resolve) => {
-      this.pendingComposition = { resolve, assetIds: new Set() };
+      this.pendingComposition = { resolve, assetIds: new Set(retainedAssetIds) };
       this.view?.webview.postMessage({ type: 'compose', title });
     });
   }
@@ -80,16 +83,12 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     });
   }
 
-  private async cancelComposition(): Promise<void> {
+  private async cancelComposition(retainedAssetIds: readonly string[] = []): Promise<void> {
     const pending = this.pendingComposition;
     if (!pending) return;
     this.pendingComposition = undefined;
     pending.resolve(undefined);
-    const referenced = this.store.get().flatMap((item) =>
-      item.message.parts
-        .filter((part) => part.type === 'asset')
-        .map((part) => part.assetId),
-    );
+    const referenced = [...assetIdsOf(this.store.get()), ...retainedAssetIds];
     await this.assets.removeUnreferenced(referenced);
   }
 
@@ -134,49 +133,6 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       const uri = this.assets.uri(id);
       return uri ? [{ id, label: `Image I${index + 1}`, uri }] : [];
     });
-  }
-
-  private async unusedDestination(folder: vscode.Uri, name: string): Promise<vscode.Uri> {
-    const extension = path.extname(name);
-    const stem = path.basename(name, extension);
-    for (let copy = 0; ; copy += 1) {
-      const candidate = vscode.Uri.joinPath(
-        folder,
-        copy ? `${stem}-${copy + 1}${extension}` : name,
-      );
-      try {
-        await vscode.workspace.fs.stat(candidate);
-      } catch {
-        return candidate;
-      }
-    }
-  }
-
-  private async saveAssets(ids: unknown): Promise<void> {
-    const assets = this.deliveryAssets(ids);
-    if (!assets.length) return;
-    const [folder] = await vscode.window.showOpenDialog({
-      title: 'Save Dogear images',
-      openLabel: `Save ${assets.length} ${assets.length === 1 ? 'image' : 'images'} here`,
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-    }) || [];
-    if (!folder) return;
-
-    let saved = 0;
-    for (const [index, delivery] of assets.entries()) {
-      const record = this.assets.get(delivery.id);
-      const bytes = record ? await this.assets.read(record.id) : undefined;
-      if (!record || !bytes) continue;
-      const clean = record.displayName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-') || 'image';
-      const destination = await this.unusedDestination(folder, `I${index + 1}-${clean}`);
-      await vscode.workspace.fs.writeFile(destination, bytes);
-      saved += 1;
-    }
-    vscode.window.showInformationMessage(
-      `Dogear: saved ${saved} ${saved === 1 ? 'image' : 'images'}.`,
-    );
   }
 
   private async storeAsset(msg: any): Promise<void> {
@@ -248,11 +204,22 @@ export class DogearPanel implements vscode.WebviewViewProvider {
           ? 'Prompt copied with local image paths — attach the files if the destination cannot read them.'
           : 'Prompt copied — paste it into any chat.');
         break;
+      case 'attachAssets': {
+        const requestId = String(msg.requestId || '');
+        try {
+          const result = await attachToCodex(this.deliveryAssets(msg.assetIds));
+          this.respond(requestId, result);
+        } catch (error) {
+          this.respond(
+            requestId,
+            undefined,
+            error instanceof Error ? error.message : 'Could not attach images to this chat.',
+          );
+        }
+        break;
+      }
       case 'send':
         await sendToSidebar(msg.target, msg.prompt, this.deliveryAssets(msg.assetIds));
-        break;
-      case 'saveAssets':
-        await this.saveAssets(msg.assetIds);
         break;
       case 'clear': {
         const n = this.store.get().length;
@@ -363,11 +330,12 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     <div id="capture-editor" data-placeholder="Type a question, paste an image, or drop one here…"></div>
     <input id="capture-images" type="file" accept="image/*" multiple hidden />
     <div class="capture-actions">
+      <span class="capture-action-spacer"></span>
       <button id="capture-add-image" title="Attach one or more images">＋ Image</button>
-      <span class="capture-hint"><kbd>⌘/Ctrl+Enter</kbd> add · <kbd>Esc</kbd> cancel</span>
       <button id="capture-cancel">Cancel</button>
       <button id="capture-submit" class="primary">Add to queue</button>
     </div>
+    <div class="capture-hint"><kbd>⌘/Ctrl+Enter</kbd> add · <kbd>Esc</kbd> cancel</div>
   </section>
 
   <main id="list">
@@ -380,11 +348,15 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   </main>
 
   <footer>
+    <details id="manual-handoff" hidden>
+      <summary id="manual-summary">Manual handoff</summary>
+      <p>Open the destination chat, then attach every labeled image at once.</p>
+      <div id="manual-assets"></div>
+    </details>
     <div class="actions">
       <button id="copy" title="Copy the composed prompt to the clipboard">Copy prompt</button>
       <button id="to-claude" title="Paste the composed prompt into the Claude Code sidebar without sending">→ Claude Code</button>
       <button id="to-codex" title="Paste the composed prompt into the Codex sidebar without sending">→ Codex</button>
-      <button id="save-images" title="Save every queued image to a folder" hidden>Save images…</button>
       <button id="clear" class="danger" title="Remove all queries">Clear</button>
     </div>
     <div class="lang-row">
