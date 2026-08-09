@@ -53,6 +53,22 @@
     selection.addRange(range);
   }
 
+  function caretRangeFromPointWithin(root, x, y) {
+    const treeRoot = root.getRootNode();
+    const legacyRange = treeRoot.caretRangeFromPoint?.(x, y);
+    if (legacyRange && root.contains(legacyRange.commonAncestorContainer)) return legacyRange;
+    const shadowRoots = treeRoot instanceof ShadowRoot ? { shadowRoots: [treeRoot] } : undefined;
+    const position = document.caretPositionFromPoint?.(x, y, shadowRoots);
+    if (position && root.contains(position.offsetNode)) {
+      const range = document.createRange();
+      range.setStart(position.offsetNode, position.offset);
+      range.collapse(true);
+      return range;
+    }
+    const range = treeRoot === document ? null : document.caretRangeFromPoint?.(x, y);
+    return range && root.contains(range.commonAncestorContainer) ? range : null;
+  }
+
   function create(root, options = {}) {
     root.classList.add('dogear-composer');
     root.contentEditable = 'true';
@@ -200,8 +216,8 @@
         targetChip.parentNode.insertBefore(dropCaret, before ? targetChip : targetChip.nextSibling);
         return true;
       }
-      const range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
-      if (range && root.contains(range.commonAncestorContainer)) {
+      const range = caretRangeFromPointWithin(root, event.clientX, event.clientY);
+      if (range) {
         const containingChip = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
           ? range.commonAncestorContainer.closest?.('.dogear-asset-chip')
           : range.commonAncestorContainer.parentElement?.closest?.('.dogear-asset-chip');
@@ -363,7 +379,7 @@
       }
       if (!event.dataTransfer.files.length) return;
       event.preventDefault();
-      const pointRange = document.caretRangeFromPoint?.(event.clientX, event.clientY) || lastRange;
+      const pointRange = caretRangeFromPointWithin(root, event.clientX, event.clientY) || lastRange;
       addFiles(event.dataTransfer.files, pointRange);
     });
     root.addEventListener('dragend', () => {

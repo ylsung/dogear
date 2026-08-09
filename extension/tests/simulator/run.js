@@ -506,6 +506,39 @@ async function main() {
       }),
       'initial on-page attachment thumbnail',
     );
+    const onPageInlineReorder = await page.evaluate(async () => {
+      const shadow = document.querySelector('#dogear-host').shadowRoot;
+      const editor = shadow.querySelector('.question');
+      const chip = editor.querySelector('.dogear-asset-chip');
+      const text = document.createTextNode('move this image into the middle of this sentence');
+      editor.appendChild(text);
+      const textRange = document.createRange();
+      textRange.selectNodeContents(text);
+      const rect = textRange.getBoundingClientRect();
+      const transfer = new DataTransfer();
+      chip.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: transfer }));
+      const dragAtText = {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+        dataTransfer: transfer,
+      };
+      editor.dispatchEvent(new DragEvent('dragover', dragAtText));
+      const insertionCaretShown = !!editor.querySelector('.dogear-inline-drop-caret');
+      editor.dispatchEvent(new DragEvent('drop', dragAtText));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const children = [...editor.childNodes];
+      const chipIndex = children.indexOf(chip);
+      return {
+        insertionCaretShown,
+        textBeforeImage: children.slice(0, chipIndex).some((node) => node.textContent.length > 0),
+        textAfterImage: children.slice(chipIndex + 1).some((node) => node.textContent.length > 0),
+      };
+    });
+    if (Object.values(onPageInlineReorder).some((value) => !value)) {
+      throw new Error(`On-page inline asset reorder regression: ${JSON.stringify(onPageInlineReorder)}`);
+    }
     await page.evaluate(() => {
       const shadow = document.querySelector('#dogear-host').shadowRoot;
       const editor = shadow.querySelector('.question');
