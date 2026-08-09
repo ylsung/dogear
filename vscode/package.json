@@ -5,6 +5,11 @@
   "version": "0.2.0",
   "publisher": "ylsung",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ylsung/dogear.git",
+    "directory": "vscode"
+  },
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Other"],
   "icon": "media/icon128.png",
