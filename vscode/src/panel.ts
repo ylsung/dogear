@@ -70,9 +70,10 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   }
 
   private async reveal(): Promise<void> {
-    if (!this.view) {
-      await vscode.commands.executeCommand(`${DogearPanel.viewId}.focus`);
-    }
+    // A resolved webview can still be hidden behind another Activity Bar
+    // container. Always focus the contributed view so hotkey capture brings
+    // the composer into view, not only on its first creation.
+    await vscode.commands.executeCommand(`${DogearPanel.viewId}.focus`);
     if (this.view) return;
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Dogear sidebar did not open.')), 3000);
