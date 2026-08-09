@@ -667,6 +667,7 @@ document.getElementById('copy').addEventListener('click', async () => {
 document.getElementById('to-claude').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
+  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'send',
     target: 'claude',
@@ -678,6 +679,7 @@ document.getElementById('to-claude').addEventListener('click', async () => {
 document.getElementById('to-codex').addEventListener('click', async () => {
   const prompt = await composeOrWarn();
   if (!prompt) return;
+  showManualHandoff(prompt.assets);
   vscodeApi.postMessage({
     type: 'send',
     target: 'codex',

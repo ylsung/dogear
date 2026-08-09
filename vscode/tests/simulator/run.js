@@ -230,6 +230,19 @@ async function main() {
     assert.ok(await page.evaluate(() => window.__hostMessages.some(
       (message) => message.type === 'captureScreenshot')));
 
+    for (const [button, target] of [['#to-claude', 'claude'], ['#to-codex', 'codex']]) {
+      await page.evaluate(() => {
+        const handoff = document.getElementById('manual-handoff');
+        handoff.hidden = true;
+        handoff.open = false;
+      });
+      await page.locator(button).click();
+      await page.locator('#manual-handoff[open]').waitFor();
+      assert.equal(await page.locator('#manual-handoff').isHidden(), false);
+      assert.equal(await page.evaluate((expected) => window.__hostMessages.findLast(
+        (message) => message.type === 'send')?.target, target), target);
+    }
+
     await page.locator('.card[data-id="q2"] .dogear-remove-asset').last().click();
     await page.waitForFunction(() => window.__hostMessages.some((message) =>
       message.type === 'save' &&
