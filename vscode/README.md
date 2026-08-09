@@ -17,7 +17,7 @@ npm run build     # copies shared files from ../extension and bundles src/
 - **Run from source**: open the `vscode/` folder in VSCode and press `F5`
   (Extension Development Host).
 - **Install for real**: `npx @vscode/vsce package` then
-  `code --install-extension dogear-vscode-0.2.0.vsix`.
+  `code --install-extension dogear-vscode-0.2.1.vsix`.
 
 `media/theme.js`, `media/prompts/`, and `media/fonts/` are build-time copies —
 the source of truth lives in `../extension/`. Edit there, rebuild here.

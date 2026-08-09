@@ -53,6 +53,22 @@
     selection.addRange(range);
   }
 
+  function caretRangeFromPointWithin(root, x, y) {
+    const treeRoot = root.getRootNode();
+    const legacyRange = treeRoot.caretRangeFromPoint?.(x, y);
+    if (legacyRange && root.contains(legacyRange.commonAncestorContainer)) return legacyRange;
+    const shadowRoots = treeRoot instanceof ShadowRoot ? { shadowRoots: [treeRoot] } : undefined;
+    const position = document.caretPositionFromPoint?.(x, y, shadowRoots);
+    if (position && root.contains(position.offsetNode)) {
+      const range = document.createRange();
+      range.setStart(position.offsetNode, position.offset);
+      range.collapse(true);
+      return range;
+    }
+    const range = treeRoot === document ? null : document.caretRangeFromPoint?.(x, y);
+    return range && root.contains(range.commonAncestorContainer) ? range : null;
+  }
+
   function create(root, options = {}) {
     root.classList.add('dogear-composer');
     root.contentEditable = 'true';
@@ -68,6 +84,9 @@
     let pendingInput = null;
     let draggedBeforeParts = null;
     let historyMutation = Promise.resolve();
+    let pendingDropRange = null;
+    let pendingDragPoint = null;
+    let dragFrame = 0;
     const dropCaret = document.createElement('span');
     dropCaret.className = 'dogear-inline-drop-caret';
     dropCaret.contentEditable = 'false';
@@ -189,33 +208,114 @@
 
     function clearDropCaret() {
       dropCaret.remove();
+      pendingDropRange = null;
     }
 
-    function placeDropCaret(event) {
-      clearDropCaret();
-      const targetChip = event.target.closest?.('.dogear-asset-chip');
+    function sameRange(a, b) {
+      return a && b && a.startContainer === b.startContainer && a.startOffset === b.startOffset;
+    }
+
+    function caretRect(range) {
+      const collapsedRect = range.getBoundingClientRect();
+      if (collapsedRect.height) return collapsedRect;
+      const container = range.startContainer;
+      const offset = range.startOffset;
+      const probe = range.cloneRange();
+      if (container.nodeType === Node.TEXT_NODE && container.data.length) {
+        if (offset < container.data.length) {
+          probe.setEnd(container, offset + 1);
+          const rect = probe.getBoundingClientRect();
+          return { left: rect.left, top: rect.top, height: rect.height };
+        }
+        probe.setStart(container, offset - 1);
+        const rect = probe.getBoundingClientRect();
+        return { left: rect.right, top: rect.top, height: rect.height };
+      }
+      const child = container.childNodes?.[offset] || container.childNodes?.[offset - 1];
+      const rect = child?.getBoundingClientRect?.() || root.getBoundingClientRect();
+      return {
+        left: container.childNodes?.[offset] ? rect.left : rect.right,
+        top: rect.top,
+        height: rect.height || parseFloat(getComputedStyle(root).lineHeight) || 16,
+      };
+    }
+
+    function showDropCaret(range, rect = caretRect(range)) {
+      if (!sameRange(pendingDropRange, range)) pendingDropRange = range.cloneRange();
+      const treeRoot = root.getRootNode();
+      const overlayParent = treeRoot.nodeType === Node.DOCUMENT_NODE ? treeRoot.body : treeRoot;
+      if (dropCaret.parentNode !== overlayParent) overlayParent.appendChild(dropCaret);
+      const left = `${rect.left}px`;
+      const top = `${rect.top}px`;
+      const height = `${rect.height || 16}px`;
+      if (dropCaret.style.left !== left) dropCaret.style.left = left;
+      if (dropCaret.style.top !== top) dropCaret.style.top = top;
+      if (dropCaret.style.height !== height) dropCaret.style.height = height;
+    }
+
+    function placeDropCaret(point) {
+      const targetChip = point.target.closest?.('.dogear-asset-chip');
       if (targetChip && root.contains(targetChip)) {
         const rect = targetChip.getBoundingClientRect();
-        const before = event.clientX < rect.left + rect.width / 2;
-        targetChip.parentNode.insertBefore(dropCaret, before ? targetChip : targetChip.nextSibling);
+        const before = point.clientX < rect.left + rect.width / 2;
+        const range = document.createRange();
+        if (before) range.setStartBefore(targetChip);
+        else range.setStartAfter(targetChip);
+        range.collapse(true);
+        showDropCaret(range, {
+          left: before ? rect.left : rect.right,
+          top: rect.top,
+          height: rect.height,
+        });
         return true;
       }
-      const range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
-      if (range && root.contains(range.commonAncestorContainer)) {
+      const range = caretRangeFromPointWithin(root, point.clientX, point.clientY);
+      if (range) {
         const containingChip = range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
           ? range.commonAncestorContainer.closest?.('.dogear-asset-chip')
           : range.commonAncestorContainer.parentElement?.closest?.('.dogear-asset-chip');
         if (containingChip) {
           const rect = containingChip.getBoundingClientRect();
-          const before = event.clientX < rect.left + rect.width / 2;
-          containingChip.parentNode.insertBefore(dropCaret, before ? containingChip : containingChip.nextSibling);
-        } else {
-          range.insertNode(dropCaret);
+          const before = point.clientX < rect.left + rect.width / 2;
+          if (before) range.setStartBefore(containingChip);
+          else range.setStartAfter(containingChip);
+          range.collapse(true);
+          showDropCaret(range, {
+            left: before ? rect.left : rect.right,
+            top: rect.top,
+            height: rect.height,
+          });
+          return true;
         }
+        showDropCaret(range);
         return true;
       }
-      root.appendChild(dropCaret);
+      const end = document.createRange();
+      end.selectNodeContents(root);
+      end.collapse(false);
+      showDropCaret(end);
       return true;
+    }
+
+    function scheduleDropCaret(event) {
+      pendingDragPoint = {
+        target: event.target,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      };
+      if (dragFrame) return;
+      dragFrame = requestAnimationFrame(() => {
+        dragFrame = 0;
+        const point = pendingDragPoint;
+        pendingDragPoint = null;
+        if (draggedChip && point) placeDropCaret(point);
+      });
+    }
+
+    function cancelDropCaretFrame() {
+      if (dragFrame) cancelAnimationFrame(dragFrame);
+      dragFrame = 0;
+      pendingDragPoint = null;
     }
 
     function rememberRange() {
@@ -331,7 +431,7 @@
       if (draggedChip) {
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
-        placeDropCaret(event);
+        scheduleDropCaret(event);
         return;
       }
       if ([...event.dataTransfer.items].some((item) => item.kind === 'file')) {
@@ -342,7 +442,10 @@
     });
     root.addEventListener('dragleave', (event) => {
       root.classList.remove('dogear-drop-active');
-      if (draggedChip && !root.contains(event.relatedTarget)) clearDropCaret();
+      if (draggedChip && !root.contains(event.relatedTarget)) {
+        cancelDropCaretFrame();
+        clearDropCaret();
+      }
     });
     root.addEventListener('drop', async (event) => {
       root.classList.remove('dogear-drop-active');
@@ -350,9 +453,16 @@
         event.preventDefault();
         const chip = draggedChip;
         draggedChip = null;
-        if (!dropCaret.isConnected) placeDropCaret(event);
-        dropCaret.before(chip);
+        cancelDropCaretFrame();
+        placeDropCaret(event);
+        const targetRange = pendingDropRange?.cloneRange();
         clearDropCaret();
+        if (!targetRange) return;
+        const anchor = document.createComment('dogear-drop');
+        targetRange.insertNode(anchor);
+        anchor.before(chip);
+        anchor.remove();
+        root.normalize();
         placeCaretAfter(chip);
         lastRange = selectionRangeWithin(root);
         const after = getParts();
@@ -363,12 +473,13 @@
       }
       if (!event.dataTransfer.files.length) return;
       event.preventDefault();
-      const pointRange = document.caretRangeFromPoint?.(event.clientX, event.clientY) || lastRange;
+      const pointRange = caretRangeFromPointWithin(root, event.clientX, event.clientY) || lastRange;
       addFiles(event.dataTransfer.files, pointRange);
     });
     root.addEventListener('dragend', () => {
       draggedChip = null;
       draggedBeforeParts = null;
+      cancelDropCaretFrame();
       clearDropCaret();
     });
     root.addEventListener('paste', (event) => {
@@ -383,6 +494,8 @@
       addFiles,
       destroy: () => {
         partsRenderVersion += 1;
+        cancelDropCaretFrame();
+        clearDropCaret();
         revokeObjectUrls();
         options.onDestroy?.();
       },

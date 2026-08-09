@@ -242,15 +242,16 @@
         display: inline-flex; align-items: center; gap: 4px;
         margin: 1px 3px; padding: 2px 4px; border: 1px solid ${T.colors.borderStrong};
         border-radius: 5px; background: ${T.colors.groupBg}; vertical-align: middle;
-        color: ${T.colors.textMuted}; font-size: 11px;
+        color: ${T.colors.textMuted}; font-size: 11px; cursor: grab;
       }
+      .dogear-asset-chip:active { cursor: grabbing; }
       .dogear-asset-chip img {
         width: 22px; height: 22px; object-fit: cover; border-radius: 3px;
       }
       .dogear-inline-drop-caret {
-        display: inline-block; width: 2px; height: 1.35em; margin: 0 1px;
-        border-radius: 1px; background: ${T.colors.primary}; vertical-align: text-bottom;
-        pointer-events: none;
+        position: fixed; display: block; width: 2px; margin: 0;
+        border-radius: 1px; background: ${T.colors.primary};
+        pointer-events: none; z-index: 2147483647;
       }
       .dogear-remove-asset {
         border: 0; padding: 0 2px; background: transparent; color: ${T.colors.textFaint}; cursor: pointer;
