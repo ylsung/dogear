@@ -12,13 +12,28 @@ or choose **Ask page** when your question is about the page as a whole. Dogear
 keeps the batch editable and uploads its images only when you hand the prompt to
 a chat.
 
-Two extensions live in this repo, sharing the same theme, prompt templates, and
-queue model:
+Three clients live in this repo, sharing the same interaction model:
 
 - [`extension/`](extension/) — the Chrome extension (this README)
 - [`vscode/`](vscode/) — the VS Code extension, for querying code and text
   right inside your editor (see [VS Code extension](#vs-code-extension) below,
   or [its own README](vscode/README.md) for full details)
+- [`desktop/`](desktop/) — a macOS desktop prototype for Claude, Codex, terminals,
+  PDF viewers, rendered previews, and Simulator, with inline image handoff
+
+## macOS desktop app
+
+Download [Dogear 0.1.1 for Apple silicon](desktop/releases/Dogear-0.1.1-macOS-arm64.dmg)
+(macOS 13 or newer). Open the DMG, then drag **Dogear** into **Applications**.
+
+This early beta uses a stable local development signature rather than an Apple
+Developer ID. On first launch, right-click **Dogear** in Applications, choose
+**Open**, then confirm. macOS will separately request Accessibility permission
+for selection capture and cross-app delivery, and Screen Recording permission
+when you first capture a region. See the [desktop guide](desktop/README.md) for
+usage, permissions, build instructions, and current limitations. The published
+[SHA-256 checksum](desktop/releases/Dogear-0.1.1-macOS-arm64-SHA256.txt) can be
+used to verify the download.
 
 ## Install (developer mode)
 
