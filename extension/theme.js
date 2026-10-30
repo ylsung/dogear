@@ -14,12 +14,25 @@ globalThis.DOGEAR_THEME = {
   font: {
     // UI font for Dogear's own surfaces (popover, side panel). Page content
     // and highlights keep the host page's font.
-    family: "'Lora', Georgia, 'Times New Roman', serif",
+    // Commissioner supplies Latin, Greek, and Cyrillic. The remaining names
+    // are per-script fallbacks: preferred community fonts when installed,
+    // then the platform UI font. This keeps the extension small while complex
+    // scripts continue to shape with a font designed for that script.
+    // Han text pins Traditional Chinese system fonts (PingFang TC, Microsoft
+    // JhengHei) so it does not depend on the OS locale. Nastaliq is left out:
+    // macOS ships Noto Nastaliq Urdu, and listing it would render all Arabic
+    // in Urdu calligraphic style; Urdu falls back to a Naskh UI face instead.
+    family:
+      "'Commissioner', 'Chiron Hei HK Text', 'Chiron Hei HK', 'Noto Sans TC', " +
+      "'PingFang TC', 'Microsoft JhengHei', 'Noto Sans Arabic UI', " +
+      "'Noto Sans Arabic', 'Noto Sans Devanagari', 'Noto Sans Bengali', " +
+      "system-ui, sans-serif",
     // Bundled @font-face sources (files live in fonts/, declared as
     // web-accessible resources so content pages may load them).
     faces: [
-      { family: 'Lora', weight: '400', file: 'fonts/lora-400.woff2' },
-      { family: 'Lora', weight: '600', file: 'fonts/lora-600.woff2' },
+      { family: 'Commissioner', weight: '400', file: 'fonts/commissioner-400.woff2' },
+      { family: 'Commissioner', weight: '500', file: 'fonts/commissioner-500.woff2' },
+      { family: 'Commissioner', weight: '600', file: 'fonts/commissioner-600.woff2' },
     ],
   },
 

@@ -40,7 +40,7 @@ private final class DogearTextView: NSTextView {
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
         super.drawInsertionPoint(
-            in: Self.compactInsertionRect(rect, font: font ?? .preferredFont(forTextStyle: .body)),
+            in: Self.compactInsertionRect(rect, font: font ?? DogearTypography.editorFont),
             color: color,
             turnedOn: flag
         )
@@ -295,7 +295,7 @@ struct InlineQuestionEditor: NSViewRepresentable {
         editor.textColor = .labelColor
         editor.insertionPointColor = .controlAccentColor
         editor.textContainerInset = NSSize(width: 7, height: 7)
-        editor.font = .preferredFont(forTextStyle: .body)
+        editor.font = DogearTypography.editorFont
         editor.minSize = .zero
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.isVerticallyResizable = true
@@ -358,7 +358,7 @@ struct InlineQuestionEditor: NSViewRepresentable {
         }
 
         var textAttributes: [NSAttributedString.Key: Any] {
-            [.font: NSFont.preferredFont(forTextStyle: .body), .foregroundColor: NSColor.labelColor]
+            [.font: DogearTypography.editorFont, .foregroundColor: NSColor.labelColor]
         }
 
         private func publish(_ notification: Notification) {
@@ -587,7 +587,7 @@ enum InlineQuestionEditorSelfTest {
         editor.allowsImageEditing = false
         editor.usesRolloverButtonForSelection = false
         editor.textColor = .labelColor
-        editor.font = .preferredFont(forTextStyle: .body)
+        editor.font = DogearTypography.editorFont
         editor.textContainerInset = NSSize(width: 7, height: 7)
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false

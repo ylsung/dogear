@@ -1,6 +1,8 @@
 /* All values come from theme.js, applied as CSS variables by sidepanel.js. */
 
 * { box-sizing: border-box; margin: 0; }
+button, select, summary { font-family: inherit; }
+button, select { font-weight: 500; }
 body {
   font-family: var(--font);
   font-size: 13px;
@@ -19,7 +21,7 @@ header {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
-h1 { font-size: 15px; }
+h1 { font-size: 15px; font-weight: 600; }
 #count { font-size: 12px; color: var(--textMuted); }
 .lang-row {
   display: flex;

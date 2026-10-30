@@ -6,7 +6,7 @@
 const vscodeApi = acquireVsCodeApi();
 
 // Apply the global theme (see theme.js) as CSS variables + branded text.
-// Lora @font-face is injected by the host HTML (webview resource URIs).
+// Commissioner @font-face is injected by the host HTML (webview resource URIs).
 {
   const T = globalThis.DOGEAR_THEME;
   const root = document.documentElement;

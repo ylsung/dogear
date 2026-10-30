@@ -35,6 +35,9 @@ trap - EXIT
 mkdir -p "$app_root/Contents/MacOS" "$app_root/Contents/Resources"
 cp "$desktop_root/.build/release/DogearDesktop" "$app_root/Contents/MacOS/DogearDesktop"
 cp "$desktop_root/App/Info.plist" "$app_root/Contents/Info.plist"
+mkdir -p "$app_root/Contents/Resources/Fonts"
+cp "$desktop_root"/App/Fonts/*.ttf "$app_root/Contents/Resources/Fonts/"
+cp "$desktop_root/App/Fonts/LICENSE-Commissioner-OFL.txt" "$app_root/Contents/Resources/Fonts/"
 plutil -lint "$app_root/Contents/Info.plist" >/dev/null
 test -x "$app_root/Contents/MacOS/DogearDesktop"
 

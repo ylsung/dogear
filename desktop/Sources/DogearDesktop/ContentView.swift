@@ -85,18 +85,18 @@ struct ContentView: View {
                     Color.black.opacity(0.2).ignoresSafeArea()
                     VStack(alignment: .leading, spacing: 16) {
                         Label("Dogear needs Accessibility access", systemImage: "exclamationmark.triangle.fill")
-                            .font(.headline).foregroundStyle(.red)
+                            .font(DogearTypography.headline).foregroundStyle(.red)
                         Text("Dogear cannot capture selected text or paste into another app until you allow Accessibility access.")
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Turn on Dogear in System Settings → Privacy & Security → Accessibility. If it is already on but capture still fails, choose Set Up Access Again, then turn on Dogear when Settings opens.")
-                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                            .font(DogearTypography.callout).fixedSize(horizontal: false, vertical: true)
                         Button("Set Up Access Again", action: repairAccessibility)
                         Text("This resets only Dogear’s Accessibility permission. You’ll need to allow access again.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(DogearTypography.caption).foregroundStyle(.secondary)
                         AccessibilityExplanation()
                         Button("Restart Dogear", action: restart)
                         if let error = state.accessibilityRecoveryError {
-                            Text(error).font(.caption).foregroundStyle(.red)
+                            Text(error).font(DogearTypography.caption).foregroundStyle(.red)
                         }
                         HStack {
                             Button("Not now") { state.showAccessibilityNotice = false }
@@ -143,14 +143,14 @@ struct ContentView: View {
         ZStack {
             Color.black.opacity(0.2).ignoresSafeArea()
             VStack(alignment: .leading, spacing: 16) {
-                Label(title, systemImage: "exclamationmark.triangle.fill").font(.headline).foregroundStyle(.red)
+                Label(title, systemImage: "exclamationmark.triangle.fill").font(DogearTypography.headline).foregroundStyle(.red)
                 Text(detail).fixedSize(horizontal: false, vertical: true)
-                Text(instruction).font(.callout).fixedSize(horizontal: false, vertical: true)
+                Text(instruction).font(DogearTypography.callout).fixedSize(horizontal: false, vertical: true)
                 Button("Set Up Access Again", action: repair)
                 Text("This resets only Dogear’s permission. You’ll need to allow it again.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DogearTypography.caption).foregroundStyle(.secondary)
                 Button("Restart Dogear", action: restart)
-                if let error { Text(error).font(.caption).foregroundStyle(.red) }
+                if let error { Text(error).font(DogearTypography.caption).foregroundStyle(.red) }
                 HStack {
                     Button("Not now", action: dismiss)
                     Spacer()
@@ -167,8 +167,8 @@ struct ContentView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Dogear").font(.system(size: 23, weight: .semibold, design: .serif))
-                Text("\(state.queue.count) queued").font(.caption).foregroundStyle(.secondary)
+                Text("Dogear").font(DogearTypography.title)
+                Text("\(state.queue.count) queued").font(DogearTypography.caption).foregroundStyle(.secondary)
             }
             Spacer()
             Button(action: captureText) { Label("Capture", systemImage: "text.viewfinder") }
@@ -181,7 +181,7 @@ struct ContentView: View {
         VStack(spacing: 12) {
             Spacer()
             Image(systemName: "bookmark.square").font(.system(size: 38)).foregroundStyle(.secondary)
-            Text("Mark questions without leaving your flow").font(.headline)
+            Text("Mark questions without leaving your flow").font(DogearTypography.headline)
             Text("Press ⌃⌥Q in any app. Dogear captures selected text, or starts region capture when there is no selection.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
             Spacer()
@@ -200,7 +200,7 @@ struct ContentView: View {
                 Button("→ Terminal") { deliver(.terminal) }.buttonStyle(.borderedProminent)
             }
             HStack {
-                Text(state.status).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(state.status).font(DogearTypography.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
                 Button("Clear", action: state.clear).disabled(state.queue.isEmpty)
             }
@@ -220,7 +220,7 @@ private struct AccessibilityExplanation: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.top, 6)
         }
-        .font(.caption)
+        .font(DogearTypography.caption)
         .foregroundStyle(.secondary)
     }
 }
@@ -241,9 +241,9 @@ private struct QueueCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Q\(number)").font(.caption.bold()).padding(.horizontal, 7).padding(.vertical, 3)
+                Text("Q\(number)").font(DogearTypography.font(11, weight: .semibold)).padding(.horizontal, 7).padding(.vertical, 3)
                     .background(Color.accentColor.opacity(0.15), in: Capsule())
-                Text(sourceHeading).font(.subheadline.bold()).lineLimit(1)
+                Text(sourceHeading).font(DogearTypography.subheadline).lineLimit(1)
                     .textSelection(.enabled)
                 Spacer()
                 Image(systemName: "line.3.horizontal")
@@ -268,7 +268,7 @@ private struct QueueCard: View {
 
             HStack {
                 Text("Images are inline: drag them, or select and press Delete.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DogearTypography.caption2).foregroundStyle(.secondary)
                 Spacer()
                 Button("＋ Image", action: chooseImages)
                 Button(action: moveUp) { Image(systemName: "arrow.up") }.disabled(!canMoveUp).help("Move up")
@@ -307,7 +307,7 @@ private struct PartView: View {
     var body: some View {
         switch part {
         case .text(let text):
-            Text(text).font(.callout).textSelection(.enabled).padding(8).frame(maxWidth: .infinity, alignment: .leading)
+            Text(text).font(DogearTypography.callout).textSelection(.enabled).padding(8).frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.secondary.opacity(0.09), in: RoundedRectangle(cornerRadius: 7))
         case .image(let image):
             if let value = NSImage(contentsOfFile: image.path) {
@@ -337,15 +337,15 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(composerHeading).font(.headline)
+            Text(composerHeading).font(DogearTypography.headline)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Captured target").font(.caption.bold()).foregroundStyle(.secondary)
+                Text("Captured target").font(DogearTypography.font(11, weight: .semibold)).foregroundStyle(.secondary)
                 ForEach(Array(draft.context.enumerated()), id: \.offset) { _, part in PartView(part: part, compactImage: true) }
             }
             .padding(9).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 5) {
-                Text("Question").font(.caption.bold()).foregroundStyle(.secondary)
+                Text("Question").font(DogearTypography.font(11, weight: .semibold)).foregroundStyle(.secondary)
                 InlineQuestionEditor(parts: message, insertion: $insertion) {
                     message = $0
                     state.updateDraftMessage($0)
@@ -354,7 +354,7 @@ struct ComposerView: View {
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.4), lineWidth: 1.5))
                 Text("Inline images can be dragged, cut, copied, or deleted like text.")
-                    .font(.caption2).foregroundStyle(.secondary)
+                    .font(DogearTypography.caption2).foregroundStyle(.secondary)
                 }
             HStack {
                 if draft.source.surface == .pdf {
