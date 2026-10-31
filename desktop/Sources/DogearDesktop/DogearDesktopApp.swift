@@ -474,7 +474,7 @@ private struct ExportPromptView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Export prompt").font(.headline)
                 Text("Choose where to send \(state.queue.count) queued \(state.queue.count == 1 ? "question" : "questions").")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(DogearTheme.textMuted)
             }
             HStack {
                 Button("Copy", action: copy)
@@ -490,5 +490,7 @@ private struct ExportPromptView: View {
         }
         .padding(20)
         .frame(width: 390)
+        .background(DogearTheme.panel)
+        .tint(DogearTheme.primary)
     }
 }

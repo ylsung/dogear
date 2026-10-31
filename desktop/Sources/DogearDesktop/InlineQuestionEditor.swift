@@ -233,9 +233,9 @@ private final class InlineImageAttachmentCell: NSTextAttachmentCell {
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {
         let background = NSBezierPath(roundedRect: cellFrame.insetBy(dx: 1, dy: 1), xRadius: 7, yRadius: 7)
-        NSColor.controlAccentColor.withAlphaComponent(0.18).setFill()
+        DogearTheme.nsPrimary.withAlphaComponent(0.18).setFill()
         background.fill()
-        NSColor.controlAccentColor.withAlphaComponent(0.75).setStroke()
+        DogearTheme.nsPrimary.withAlphaComponent(0.75).setStroke()
         background.lineWidth = 1.5
         background.stroke()
         if let image {
@@ -248,7 +248,7 @@ private final class InlineImageAttachmentCell: NSTextAttachmentCell {
                        respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
         }
         let deleteFrame = Self.deleteButtonFrame(in: cellFrame)
-        NSColor.systemRed.withAlphaComponent(0.92).setFill()
+        DogearTheme.nsDanger.withAlphaComponent(0.92).setFill()
         NSBezierPath(ovalIn: deleteFrame).fill()
         NSColor.white.setStroke()
         let cross = NSBezierPath()
@@ -292,8 +292,8 @@ struct InlineQuestionEditor: NSViewRepresentable {
         editor.allowsImageEditing = false
         editor.usesRolloverButtonForSelection = false
         editor.drawsBackground = false
-        editor.textColor = .labelColor
-        editor.insertionPointColor = .controlAccentColor
+        editor.textColor = DogearTheme.nsText
+        editor.insertionPointColor = DogearTheme.nsPrimary
         editor.textContainerInset = NSSize(width: 7, height: 7)
         editor.font = .preferredFont(forTextStyle: .body)
         editor.minSize = .zero
@@ -358,7 +358,7 @@ struct InlineQuestionEditor: NSViewRepresentable {
         }
 
         var textAttributes: [NSAttributedString.Key: Any] {
-            [.font: NSFont.preferredFont(forTextStyle: .body), .foregroundColor: NSColor.labelColor]
+            [.font: NSFont.preferredFont(forTextStyle: .body), .foregroundColor: DogearTheme.nsText]
         }
 
         private func publish(_ notification: Notification) {
@@ -577,7 +577,7 @@ enum InlineQuestionEditorSelfTest {
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 390, height: 150))
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
+        scroll.backgroundColor = DogearTheme.nsPanel
         let editor = DogearTextView(frame: scroll.contentView.bounds)
         let coordinator = InlineQuestionEditor.Coordinator(onChange: { _ in })
         editor.delegate = coordinator
@@ -586,7 +586,7 @@ enum InlineQuestionEditorSelfTest {
         editor.isSelectable = true
         editor.allowsImageEditing = false
         editor.usesRolloverButtonForSelection = false
-        editor.textColor = .labelColor
+        editor.textColor = DogearTheme.nsText
         editor.font = .preferredFont(forTextStyle: .body)
         editor.textContainerInset = NSSize(width: 7, height: 7)
         editor.isVerticallyResizable = true
@@ -666,7 +666,7 @@ enum InlineQuestionEditorSelfTest {
         coordinator.textViewDidChangeSelection(Notification(name: NSTextView.didChangeSelectionNotification, object: editor))
         editor.insertText(" visible", replacementRange: editor.selectedRange())
         let color = storage.attribute(.foregroundColor, at: storage.length - 1, effectiveRange: nil) as? NSColor
-        guard color == NSColor.labelColor else { throw failure("Text after an image inherited the wrong color") }
+        guard color == DogearTheme.nsText else { throw failure("Text after an image inherited the wrong color") }
 
         editor.layoutManager?.ensureLayout(for: editor.textContainer!)
         let used = editor.layoutManager?.usedRect(for: editor.textContainer!) ?? .zero

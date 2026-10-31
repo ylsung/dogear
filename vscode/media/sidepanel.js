@@ -9,9 +9,15 @@ const vscodeApi = acquireVsCodeApi();
 // Lora @font-face is injected by the host HTML (webview resource URIs).
 {
   const T = globalThis.DOGEAR_THEME;
-  const root = document.documentElement;
-  for (const [k, v] of Object.entries(T.colors)) root.style.setProperty(`--${k}`, v);
-  root.style.setProperty('--font', T.font.family);
+  // VS Code marks the webview body with its theme kind; dark and high-contrast
+  // dark themes get the dark token set.
+  const vars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
+  const s = document.createElement('style');
+  s.textContent =
+    `:root { ${vars(T.colors)} --font: ${T.font.family}; }\n` +
+    `body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light) ` +
+    `{ ${vars(T.colorsDark)} color-scheme: dark; }`;
+  document.head.appendChild(s);
   document.getElementById('brand').textContent = `${T.emoji.dog} Dogear`;
 }
 
