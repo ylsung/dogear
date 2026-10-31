@@ -19,9 +19,8 @@ EXT_ICONS = ROOT / 'extension' / 'icons'
 VSCODE_MEDIA = ROOT / 'vscode' / 'media'
 DESKTOP_RES = ROOT / 'desktop' / 'App' / 'Resources'
 
-CHARCOAL = (0x17, 0x17, 0x17)
-BLUE = (0x1D, 0x4E, 0xD8)
-REVERSED_BLUE = (0x60, 0xA5, 0xFA)
+INK = (0x16, 0x18, 0x27)  # palette Ink, matches extension/theme.js
+LEAD = (0x59, 0x60, 0xB3)  # palette Lead (`primary`)
 WHITE = (0xFF, 0xFF, 0xFF)
 TILE_BORDER = (0xE5, 0xE7, 0xEB)
 
@@ -30,7 +29,7 @@ master = master.crop(master.getchannel('A').getbbox())  # artwork only
 
 
 def recolor(img, body, ear):
-    """Swap the charcoal body / blue ear colors, keeping anti-aliased alpha."""
+    """Swap the ink body / lead ear colors, keeping anti-aliased alpha."""
     out = img.copy()
     px = out.load()
     for y in range(out.height):
@@ -43,7 +42,7 @@ def recolor(img, body, ear):
 
 VARIANTS = {
     'primary': master,
-    'reversed': recolor(master, WHITE, REVERSED_BLUE),
+    'reversed': recolor(master, WHITE, LEAD),
     'black': recolor(master, (0, 0, 0), (0, 0, 0)),
 }
 
@@ -118,7 +117,7 @@ save(tile(256, inset=0.02, radius=0.22, mark_width=0.74), VSCODE_MEDIA / 'icon.p
 # Activity Bar icon: VS Code masks it to one color, so use a single-color
 # currentColor silhouette with a square viewBox around the artwork.
 svg = (BRAND / 'dogear-mark-black.svg').read_text()
-svg = svg.replace('fill="#000000"', 'fill="currentColor"').replace('fill="#171717"', 'fill="currentColor"')
+svg = svg.replace('fill="#000000"', 'fill="currentColor"').replace('fill="#161827"', 'fill="currentColor"')
 svg = svg.replace('viewBox="0 0 602 427"', 'viewBox="-13 -101 628 628" width="24" height="24"')
 assert 'currentColor' in svg and '628 628' in svg, 'unexpected source SVG'
 (VSCODE_MEDIA / 'dogear.svg').write_text(svg)
