@@ -41,7 +41,7 @@ struct DogearDesktopApp: App {
         }
         .defaultSize(width: 430, height: 680)
 
-        MenuBarExtra("Dogear", systemImage: "bookmark.square") {
+        MenuBarExtra {
             Button("Capture selection or region  ⌃⌥Q", action: delegate.captureSelection)
             Button("Capture screen region", action: delegate.captureRegion)
             Menu("Export prompt  ⌃⌥E") {
@@ -57,6 +57,12 @@ struct DogearDesktopApp: App {
             Button("Enable Screen Recording…", action: delegate.requestScreenRecording)
             Button("Show queue", action: delegate.showWindow)
             Button("Quit Dogear") { NSApp.terminate(nil) }
+        } label: {
+            if let icon = BrandImages.menuBar {
+                Image(nsImage: icon).accessibilityLabel("Dogear")
+            } else {
+                Label("Dogear", systemImage: "bookmark.square")
+            }
         }
     }
 }

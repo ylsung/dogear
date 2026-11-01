@@ -54,7 +54,21 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg && msg.type === 'dogear-open-panel' && sender.tab && sender.tab.id != null) {
     chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
   }
+  if (msg && msg.type === 'dogear-color-scheme') setToolbarIcon(msg.dark === true);
 });
+
+// The bare charcoal toolbar mark disappears on a dark toolbar, and a service
+// worker cannot read prefers-color-scheme, so pages report it and we swap in
+// the reversed mark. (Static `icons` use a white tile instead; see manifest.)
+let toolbarIconDark = null; // unknown after a worker restart: always apply the first report
+function setToolbarIcon(dark) {
+  if (dark === toolbarIconDark) return;
+  toolbarIconDark = dark;
+  const suffix = dark ? '-dark' : '';
+  chrome.action
+    .setIcon({ path: { 16: `icons/toolbar16${suffix}.png`, 32: `icons/toolbar32${suffix}.png` } })
+    .catch(() => {});
+}
 
 // Content scripts run in the page's storage origin, so image bytes captured by
 // the on-page composer cross this validated bridge into extension IndexedDB.

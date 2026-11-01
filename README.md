@@ -1,4 +1,9 @@
-# Dogear
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="dogear-brand-assets/dogear-lockup-reversed.svg" />
+    <img src="dogear-brand-assets/dogear-lockup-primary.svg" alt="Dogear" width="320" />
+  </picture>
+</h1>
 
 When reading a webpage or an AI agent’s response, you’ll often come across sections that raise questions or need changes. You may want to highlight those parts and add a question, comment, or edit request.
 

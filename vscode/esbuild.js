@@ -23,7 +23,7 @@ function copyShared() {
   for (const f of fs.readdirSync(path.join(CHROME, 'fonts'))) {
     copy(path.join(CHROME, 'fonts', f), path.join(MEDIA, 'fonts', f));
   }
-  copy(path.join(CHROME, 'icons', 'icon128.png'), path.join(MEDIA, 'icon128.png'));
+  copy(path.join(CHROME, 'icons', 'mark.svg'), path.join(MEDIA, 'mark.svg'));
 }
 
 async function main() {

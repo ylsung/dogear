@@ -16,11 +16,20 @@
     )
     .join('\n');
   const s = document.createElement('style');
-  s.textContent = `${palette}\n${faces}`;
+  s.textContent = `${palette}
+${faces}`;
   document.head.appendChild(s);
-  document.getElementById('brand').textContent = `${T.emoji.dog} Dogear`;
   document.getElementById('open-pdf').textContent =
     `${T.emoji.pdf} Open this PDF in Dogear viewer`;
+  // Pages without a content script (chrome://, the Web Store) still get a
+  // toolbar icon that matches the browser's light/dark mode.
+  const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+  const reportScheme = () =>
+    chrome.runtime
+      .sendMessage({ type: 'dogear-color-scheme', dark: darkQuery.matches })
+      .catch(() => {});
+  reportScheme();
+  darkQuery.addEventListener('change', reportScheme);
 }
 
 const listEl = document.getElementById('list');

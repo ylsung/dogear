@@ -5,7 +5,7 @@
 
 const vscodeApi = acquireVsCodeApi();
 
-// Apply the global theme (see theme.js) as CSS variables + branded text.
+// Apply the global theme (see theme.js) as CSS variables.
 // Lora @font-face is injected by the host HTML (webview resource URIs).
 {
   const T = globalThis.DOGEAR_THEME;
@@ -14,11 +14,11 @@ const vscodeApi = acquireVsCodeApi();
   const vars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
   const s = document.createElement('style');
   s.textContent =
-    `:root { ${vars(T.colors)} --font: ${T.font.family}; }\n` +
+    `:root { ${vars(T.colors)} --font: ${T.font.family}; }
+` +
     `body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light) ` +
     `{ ${vars(T.colorsDark)} color-scheme: dark; }`;
   document.head.appendChild(s);
-  document.getElementById('brand').textContent = `${T.emoji.dog} Dogear`;
 }
 
 const listEl = document.getElementById('list');

@@ -26,6 +26,17 @@
     return location.href.split('#')[0];
   }
 
+  // The toolbar icon follows the browser's light/dark mode (see background.js).
+  if (window === window.top) {
+    const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+    const reportScheme = () =>
+      chrome.runtime
+        .sendMessage({ type: 'dogear-color-scheme', dark: darkQuery.matches })
+        .catch(() => {});
+    reportScheme();
+    darkQuery.addEventListener('change', reportScheme);
+  }
+
   // ---------- text-offset utilities ----------
 
   function bodyText() {

@@ -7,7 +7,6 @@
 
 globalThis.DOGEAR_THEME = {
   emoji: {
-    dog: '🐶', // brand mark: side panel header, toasts
     pdf: '📄', // "open PDF in Dogear viewer" button
   },
 

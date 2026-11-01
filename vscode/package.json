@@ -12,7 +12,7 @@
   },
   "engines": { "vscode": "^1.90.0" },
   "categories": ["Other"],
-  "icon": "media/icon128.png",
+  "icon": "media/icon.png",
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [

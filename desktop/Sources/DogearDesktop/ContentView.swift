@@ -168,6 +168,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack {
+            BrandMark(height: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Dogear").font(.system(size: 23, weight: .semibold, design: .serif)).foregroundStyle(DogearTheme.text)
                 Text("\(state.queue.count) queued").font(.caption).foregroundStyle(DogearTheme.textMuted)
@@ -183,7 +184,7 @@ struct ContentView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Spacer()
-            Image(systemName: "bookmark.square").font(.system(size: 38)).foregroundStyle(DogearTheme.textMuted)
+            BrandMark(height: 44)
             Text("Mark questions without leaving your flow").font(.headline).foregroundStyle(DogearTheme.text)
             Text("Press ⌃⌥Q in any app. Dogear captures selected text, or starts region capture when there is no selection.")
                 .multilineTextAlignment(.center).foregroundStyle(DogearTheme.textMuted)
