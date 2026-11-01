@@ -5,14 +5,20 @@
 
 const vscodeApi = acquireVsCodeApi();
 
-// Apply the global theme (see theme.js) as CSS variables + branded text.
+// Apply the global theme (see theme.js) as CSS variables.
 // Commissioner @font-face is injected by the host HTML (webview resource URIs).
 {
   const T = globalThis.DOGEAR_THEME;
-  const root = document.documentElement;
-  for (const [k, v] of Object.entries(T.colors)) root.style.setProperty(`--${k}`, v);
-  root.style.setProperty('--font', T.font.family);
-  document.getElementById('brand').textContent = `${T.emoji.dog} Dogear`;
+  // VS Code marks the webview body with its theme kind; dark and high-contrast
+  // dark themes get the dark token set.
+  const vars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
+  const s = document.createElement('style');
+  s.textContent =
+    `:root { ${vars(T.colors)} --font: ${T.font.family}; }
+` +
+    `body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light) ` +
+    `{ ${vars(T.colorsDark)} color-scheme: dark; }`;
+  document.head.appendChild(s);
 }
 
 const listEl = document.getElementById('list');

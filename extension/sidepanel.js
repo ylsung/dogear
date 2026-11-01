@@ -3,9 +3,10 @@
 // Apply the global theme (see theme.js) as CSS variables + branded text.
 {
   const T = globalThis.DOGEAR_THEME;
-  const root = document.documentElement;
-  for (const [k, v] of Object.entries(T.colors)) root.style.setProperty(`--${k}`, v);
-  root.style.setProperty('--font', T.font.family);
+  const vars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
+  const palette =
+    `:root { ${vars(T.colors)} --font: ${T.font.family}; }\n` +
+    `@media (prefers-color-scheme: dark) { :root { ${vars(T.colorsDark)} color-scheme: dark; } }`;
   const faces = (T.font.faces || [])
     .map(
       (f) =>
@@ -14,14 +15,21 @@
         `src: url('${chrome.runtime.getURL(f.file)}') format('woff2'); }`,
     )
     .join('\n');
-  if (faces) {
-    const s = document.createElement('style');
-    s.textContent = faces;
-    document.head.appendChild(s);
-  }
-  document.getElementById('brand').textContent = `${T.emoji.dog} Dogear`;
+  const s = document.createElement('style');
+  s.textContent = `${palette}
+${faces}`;
+  document.head.appendChild(s);
   document.getElementById('open-pdf').textContent =
     `${T.emoji.pdf} Open this PDF in Dogear viewer`;
+  // Pages without a content script (chrome://, the Web Store) still get a
+  // toolbar icon that matches the browser's light/dark mode.
+  const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+  const reportScheme = () =>
+    chrome.runtime
+      .sendMessage({ type: 'dogear-color-scheme', dark: darkQuery.matches })
+      .catch(() => {});
+  reportScheme();
+  darkQuery.addEventListener('change', reportScheme);
 }
 
 const listEl = document.getElementById('list');

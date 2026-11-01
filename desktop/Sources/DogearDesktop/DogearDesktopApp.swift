@@ -43,7 +43,7 @@ struct DogearDesktopApp: App {
         }
         .defaultSize(width: 430, height: 680)
 
-        MenuBarExtra("Dogear", systemImage: "bookmark.square") {
+        MenuBarExtra {
             Button("Capture selection or region  ⌃⌥Q", action: delegate.captureSelection)
             Button("Capture screen region", action: delegate.captureRegion)
             Menu("Export prompt  ⌃⌥E") {
@@ -59,6 +59,12 @@ struct DogearDesktopApp: App {
             Button("Enable Screen Recording…", action: delegate.requestScreenRecording)
             Button("Show queue", action: delegate.showWindow)
             Button("Quit Dogear") { NSApp.terminate(nil) }
+        } label: {
+            if let icon = BrandImages.menuBar {
+                Image(nsImage: icon).accessibilityLabel("Dogear")
+            } else {
+                Label("Dogear", systemImage: "bookmark.square")
+            }
         }
     }
 }
@@ -476,7 +482,7 @@ private struct ExportPromptView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Export prompt").font(DogearTypography.headline)
                 Text("Choose where to send \(state.queue.count) queued \(state.queue.count == 1 ? "question" : "questions").")
-                    .font(DogearTypography.callout).foregroundStyle(.secondary)
+                    .font(DogearTypography.callout).foregroundStyle(DogearTheme.textMuted)
             }
             HStack {
                 Button("Copy", action: copy)
@@ -492,5 +498,7 @@ private struct ExportPromptView: View {
         }
         .padding(20)
         .frame(width: 390)
+        .background(DogearTheme.panel)
+        .tint(DogearTheme.primary)
     }
 }

@@ -38,6 +38,8 @@ cp "$desktop_root/App/Info.plist" "$app_root/Contents/Info.plist"
 mkdir -p "$app_root/Contents/Resources/Fonts"
 cp "$desktop_root"/App/Fonts/*.ttf "$app_root/Contents/Resources/Fonts/"
 cp "$desktop_root/App/Fonts/LICENSE-Commissioner-OFL.txt" "$app_root/Contents/Resources/Fonts/"
+# App icon and logo images (regenerate with dogear-brand-assets/build-platform-icons.py).
+cp "$desktop_root"/App/Resources/* "$app_root/Contents/Resources/"
 plutil -lint "$app_root/Contents/Info.plist" >/dev/null
 test -x "$app_root/Contents/MacOS/DogearDesktop"
 

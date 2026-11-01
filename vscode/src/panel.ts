@@ -333,7 +333,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
 </head>
 <body>
   <header>
-    <h1 id="brand">Dogear</h1>
+    <h1 id="brand"><img class="brand-mark" src="${media('mark.svg')}" alt="" />Dogear</h1>
     <span id="count"></span>
   </header>
 

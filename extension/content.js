@@ -26,6 +26,17 @@
     return location.href.split('#')[0];
   }
 
+  // The toolbar icon follows the browser's light/dark mode (see background.js).
+  if (window === window.top) {
+    const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+    const reportScheme = () =>
+      chrome.runtime
+        .sendMessage({ type: 'dogear-color-scheme', dark: darkQuery.matches })
+        .catch(() => {});
+    reportScheme();
+    darkQuery.addEventListener('change', reportScheme);
+  }
+
   // ---------- text-offset utilities ----------
 
   function bodyText() {
@@ -206,23 +217,27 @@
   // Styles go through adoptedStyleSheets: pages with a strict style-src CSP
   // (e.g. the bundled PDF.js viewer, some hardened sites) block <style>
   // elements, but constructed stylesheets are not subject to page CSP.
+  // Theme tokens become CSS variables on the shadow host, so the popover
+  // follows the OS light/dark preference without re-rendering.
+  const themeVars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
   const DOGEAR_CSS = `
-      :host { all: initial; }
+      :host { all: initial; ${themeVars(T.colors)} }
+      @media (prefers-color-scheme: dark) { :host { ${themeVars(T.colorsDark)} } }
       * { box-sizing: border-box; font-family: ${T.font.family}; }
       .popover, .toast { position: fixed; z-index: 2147483647; }
       .popover {
-        display: none; width: 320px; background: ${T.colors.panel}; color: ${T.colors.text};
-        border: 1px solid ${T.colors.borderStrong}; border-radius: 10px; padding: 10px;
+        display: none; width: 320px; background: var(--panel); color: var(--text);
+        border: 1px solid var(--borderStrong); border-radius: 10px; padding: 10px;
         box-shadow: 0 6px 24px rgba(0,0,0,.18);
       }
       .popover .close {
         position: absolute; top: 6px; left: 6px; width: 18px; height: 18px;
-        border: none; background: transparent; color: ${T.colors.textFaint}; font-size: 12px;
+        border: none; background: transparent; color: var(--textFaint); font-size: 12px;
         line-height: 1; padding: 0; border-radius: 4px; cursor: pointer;
       }
-      .popover .close:hover { background: ${T.colors.groupBg}; color: ${T.colors.text}; }
+      .popover .close:hover { background: var(--groupBg); color: var(--text); }
       .popover .excerpt {
-        font-size: 11.5px; color: ${T.colors.textMuted}; border-left: 3px solid ${T.colors.primary};
+        font-size: 11.5px; color: var(--textMuted); border-left: 3px solid var(--primary);
         padding-left: 8px; margin: 0 0 8px 20px; max-height: 60px; overflow: hidden;
       }
       .popover .excerpt img {
@@ -230,19 +245,19 @@
       }
       .popover .dogear-composer {
         width: 100%; min-height: 56px; resize: vertical; font-size: 13px;
-        border: 1px solid ${T.colors.borderStrong}; border-radius: 6px; padding: 6px; outline: none;
-        background: ${T.colors.panel}; color: ${T.colors.text}; white-space: pre-wrap;
+        border: 1px solid var(--borderStrong); border-radius: 6px; padding: 6px; outline: none;
+        background: var(--panel); color: var(--text); white-space: pre-wrap;
         overflow-wrap: anywhere; cursor: text;
       }
-      .popover .dogear-composer:focus { border-color: ${T.colors.primary}; }
+      .popover .dogear-composer:focus { border-color: var(--primary); }
       .dogear-composer:empty::before {
-        content: attr(data-placeholder); color: ${T.colors.textFaint}; pointer-events: none;
+        content: attr(data-placeholder); color: var(--textFaint); pointer-events: none;
       }
       .dogear-asset-chip {
         display: inline-flex; align-items: center; gap: 4px;
-        margin: 1px 3px; padding: 2px 4px; border: 1px solid ${T.colors.borderStrong};
-        border-radius: 5px; background: ${T.colors.groupBg}; vertical-align: middle;
-        color: ${T.colors.textMuted}; font-size: 11px; cursor: grab;
+        margin: 1px 3px; padding: 2px 4px; border: 1px solid var(--borderStrong);
+        border-radius: 5px; background: var(--groupBg); vertical-align: middle;
+        color: var(--textMuted); font-size: 11px; cursor: grab;
       }
       .dogear-asset-chip:active { cursor: grabbing; }
       .dogear-asset-chip img {
@@ -250,37 +265,37 @@
       }
       .dogear-inline-drop-caret {
         position: fixed; display: block; width: 2px; margin: 0;
-        border-radius: 1px; background: ${T.colors.primary};
+        border-radius: 1px; background: var(--primary);
         pointer-events: none; z-index: 2147483647;
       }
       .dogear-remove-asset {
-        border: 0; padding: 0 2px; background: transparent; color: ${T.colors.textFaint}; cursor: pointer;
+        border: 0; padding: 0 2px; background: transparent; color: var(--textFaint); cursor: pointer;
       }
-      .dogear-drop-active { box-shadow: inset 0 0 0 2px ${T.colors.primary}; }
+      .dogear-drop-active { box-shadow: inset 0 0 0 2px var(--primary); }
       .row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
-      .hints { display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: ${T.colors.textFaint}; }
+      .hints { display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: var(--textFaint); }
       .btns { display: flex; gap: 6px; }
       .add {
-        background: ${T.colors.primary}; color: ${T.colors.textOnPrimary};
+        background: var(--primary); color: var(--textOnPrimary);
         border: none; border-radius: 6px;
         padding: 5px 12px; font-size: 12.5px; cursor: pointer;
       }
-      .add:hover { background: ${T.colors.primaryHover}; }
+      .add:hover { background: var(--primaryHover); }
       .open-queue {
-        background: ${T.colors.panel}; color: ${T.colors.textMuted};
-        border: 1px solid ${T.colors.borderStrong}; border-radius: 6px;
+        background: var(--panel); color: var(--textMuted);
+        border: 1px solid var(--borderStrong); border-radius: 6px;
         padding: 5px 10px; font-size: 12.5px; cursor: pointer;
       }
-      .open-queue:hover { background: ${T.colors.groupBg}; }
+      .open-queue:hover { background: var(--groupBg); }
       .attach {
-        background: ${T.colors.panel}; color: ${T.colors.textMuted};
-        border: 1px solid ${T.colors.borderStrong}; border-radius: 6px;
+        background: var(--panel); color: var(--textMuted);
+        border: 1px solid var(--borderStrong); border-radius: 6px;
         padding: 5px 8px; font-size: 12.5px; cursor: pointer;
       }
-      .attach:hover { background: ${T.colors.groupBg}; }
+      .attach:hover { background: var(--groupBg); }
       .toast {
         display: none; left: 50%; transform: translateX(-50%); bottom: 24px;
-        background: ${T.colors.dark}; color: ${T.colors.textOnDark}; border-radius: 8px;
+        background: var(--dark); color: var(--textOnDark); border-radius: 8px;
         padding: 8px 14px; font-size: 12.5px;
       }
       .capture-overlay {
@@ -298,8 +313,8 @@
         background: rgba(255,255,255,.12); color: white; cursor: pointer;
       }
       .capture-box {
-        display: none; position: fixed; border: 2px solid ${T.colors.primary};
-        background: ${T.colors.highlight}; box-shadow: 0 0 0 9999px rgba(10, 16, 22, .28);
+        display: none; position: fixed; border: 2px solid var(--primary);
+        background: var(--highlight); box-shadow: 0 0 0 9999px rgba(10, 16, 22, .28);
         pointer-events: none;
       }
   `;
