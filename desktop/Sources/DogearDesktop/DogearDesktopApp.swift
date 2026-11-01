@@ -8,6 +8,7 @@ struct DogearDesktopApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
+        DogearTypography.registerBundledFonts()
         guard let flag = CommandLine.arguments.firstIndex(of: "--editor-self-test") else { return }
         let path = CommandLine.arguments.indices.contains(flag + 1)
             ? CommandLine.arguments[flag + 1]
@@ -38,6 +39,7 @@ struct DogearDesktopApp: App {
                 repairScreenRecording: delegate.repairScreenRecording,
                 restart: delegate.restart
             )
+            .environment(\.font, DogearTypography.body)
         }
         .defaultSize(width: 430, height: 680)
 
@@ -478,9 +480,9 @@ private struct ExportPromptView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Export prompt").font(.headline)
+                Text("Export prompt").font(DogearTypography.headline)
                 Text("Choose where to send \(state.queue.count) queued \(state.queue.count == 1 ? "question" : "questions").")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(DogearTypography.callout).foregroundStyle(DogearTheme.textMuted)
             }
             HStack {
                 Button("Copy", action: copy)
@@ -496,5 +498,7 @@ private struct ExportPromptView: View {
         }
         .padding(20)
         .frame(width: 390)
+        .background(DogearTheme.panel)
+        .tint(DogearTheme.primary)
     }
 }

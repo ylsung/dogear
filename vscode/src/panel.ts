@@ -322,10 +322,12 @@ export class DogearPanel implements vscode.WebviewViewProvider {
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <style>
-    @font-face { font-family: 'Lora'; font-weight: 400; font-style: normal;
-      font-display: swap; src: url('${media('fonts', 'lora-400.woff2')}') format('woff2'); }
-    @font-face { font-family: 'Lora'; font-weight: 600; font-style: normal;
-      font-display: swap; src: url('${media('fonts', 'lora-600.woff2')}') format('woff2'); }
+    @font-face { font-family: 'Commissioner'; font-weight: 400; font-style: normal;
+      font-display: swap; src: url('${media('fonts', 'commissioner-400.woff2')}') format('woff2'); }
+    @font-face { font-family: 'Commissioner'; font-weight: 500; font-style: normal;
+      font-display: swap; src: url('${media('fonts', 'commissioner-500.woff2')}') format('woff2'); }
+    @font-face { font-family: 'Commissioner'; font-weight: 600; font-style: normal;
+      font-display: swap; src: url('${media('fonts', 'commissioner-600.woff2')}') format('woff2'); }
   </style>
   <link rel="stylesheet" href="${media('sidepanel.css')}" />
 </head>
