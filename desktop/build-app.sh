@@ -35,6 +35,8 @@ trap - EXIT
 mkdir -p "$app_root/Contents/MacOS" "$app_root/Contents/Resources"
 cp "$desktop_root/.build/release/DogearDesktop" "$app_root/Contents/MacOS/DogearDesktop"
 cp "$desktop_root/App/Info.plist" "$app_root/Contents/Info.plist"
+# App icon and logo images (regenerate with dogear-brand-assets/build-platform-icons.py).
+cp "$desktop_root"/App/Resources/* "$app_root/Contents/Resources/"
 plutil -lint "$app_root/Contents/Info.plist" >/dev/null
 test -x "$app_root/Contents/MacOS/DogearDesktop"
 
