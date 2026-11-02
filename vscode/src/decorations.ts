@@ -13,7 +13,7 @@ export function loadTheme(extensionPath: string): any {
     new Function('globalThis', src)(sandbox);
     return sandbox.DOGEAR_THEME;
   } catch {
-    return { colors: { highlight: 'rgba(249, 115, 22, 0.35)' } };
+    return { colors: { highlight: 'rgba(247, 178, 133, 0.45)' } };
   }
 }
 
@@ -33,7 +33,7 @@ export class Decorations {
     });
     this.flashType = vscode.window.createTextEditorDecorationType({
       backgroundColor: highlight,
-      border: `1px solid ${loadTheme(context.extensionPath).colors.primary || '#1d4ed8'}`,
+      border: `1px solid ${loadTheme(context.extensionPath).colors.primary || '#5960b3'}`,
     });
 
     context.subscriptions.push(
