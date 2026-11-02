@@ -218,11 +218,9 @@
   // (e.g. the bundled PDF.js viewer, some hardened sites) block <style>
   // elements, but constructed stylesheets are not subject to page CSP.
   // Theme tokens become CSS variables on the shadow host, so the popover
-  // follows the OS light/dark preference without re-rendering.
-  const themeVars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
+  // follows the light/dark setting (or the OS) without re-rendering.
   const DOGEAR_CSS = `
-      :host { all: initial; ${themeVars(T.colors)} }
-      @media (prefers-color-scheme: dark) { :host { ${themeVars(T.colorsDark)} } }
+      ${globalThis.DOGEAR_THEME_CSS(':host', 'all: initial;')}
       * { box-sizing: border-box; font-family: ${T.font.family}; }
       .popover, .toast { position: fixed; z-index: 2147483647; }
       .popover {
@@ -296,8 +294,34 @@
       .toast {
         display: none; left: 50%; transform: translateX(-50%); bottom: 24px;
         background: var(--dark); color: var(--textOnDark); border-radius: 8px;
-        padding: 8px 14px; font-size: 12.5px;
+        padding: 8px 14px; font-size: 12.5px; align-items: center; gap: 12px;
       }
+      .toast-action {
+        border: 1px solid var(--textOnDark); border-radius: 5px; padding: 2px 8px;
+        background: transparent; color: var(--textOnDark); font-size: 12px; cursor: pointer;
+      }
+      .toast-action:hover { background: var(--darkHover); }
+      .export {
+        display: none; position: fixed; z-index: 2147483647; top: 18px; left: 50%;
+        transform: translateX(-50%); min-width: 300px; padding: 12px;
+        background: var(--panel); color: var(--text); border: 1px solid var(--borderStrong);
+        border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.18);
+      }
+      .export-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+      .export-targets { display: flex; gap: 6px; flex-wrap: wrap; }
+      .export-targets button {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: var(--dark); color: var(--textOnDark); border: none; border-radius: 6px;
+        padding: 6px 10px; font-size: 12.5px; cursor: pointer;
+      }
+      .export-targets button:hover, .export-targets button:focus-visible {
+        background: var(--darkHover); outline: 2px solid var(--primary); outline-offset: 1px;
+      }
+      .export-targets kbd {
+        font-size: 10.5px; padding: 0 4px; border-radius: 3px;
+        background: rgba(255,255,255,.18);
+      }
+      .export-hints { margin-top: 8px; font-size: 11px; color: var(--textFaint); }
       .capture-overlay {
         display: none; position: fixed; inset: 0; z-index: 2147483646;
         cursor: crosshair; background: rgba(10, 16, 22, .18); user-select: none;
@@ -340,7 +364,12 @@
       </div>
       <div class="capture-box"></div>
     </div>
-    <div class="toast"></div>
+    <div class="export" role="dialog" aria-label="Export prompt" tabindex="-1">
+      <div class="export-title"></div>
+      <div class="export-targets"></div>
+      <div class="export-hints">Number key or click to send · Enter: last used · Esc: cancel</div>
+    </div>
+    <div class="toast"><span class="toast-text"></span><button class="toast-action" hidden></button></div>
   `;
   try {
     const sheet = new CSSStyleSheet();
@@ -409,6 +438,18 @@
   const captureBox = shadow.querySelector('.capture-box');
   const captureFullBtn = shadow.querySelector('.capture-full');
   const toastEl = shadow.querySelector('.toast');
+  const toastTextEl = shadow.querySelector('.toast-text');
+  const toastActionEl = shadow.querySelector('.toast-action');
+  const exportEl = shadow.querySelector('.export');
+  const exportTitleEl = shadow.querySelector('.export-title');
+  const exportTargetsEl = shadow.querySelector('.export-targets');
+
+  // Appearance setting (Options page): "system" leaves the OS preference in charge.
+  function applyAppearance(appearance) {
+    if (appearance === 'light' || appearance === 'dark') host.dataset.theme = appearance;
+    else delete host.dataset.theme;
+  }
+  chrome.storage.local.get('appearance').then(({ appearance }) => applyAppearance(appearance), () => {});
 
   function attachHost() {
     if (document.body && !host.isConnected) document.body.appendChild(host);
@@ -654,11 +695,137 @@
   }));
 
   let toastTimer = null;
-  function toast(msg) {
-    toastEl.textContent = msg;
-    toastEl.style.display = 'block';
+  // `action` = { label, run } adds a button (e.g. Undo) and keeps the toast
+  // up long enough to reach it.
+  function toast(msg, action) {
+    attachHost();
+    toastTextEl.textContent = msg;
+    toastActionEl.hidden = !action;
+    toastActionEl.onclick = action
+      ? () => {
+        toastEl.style.display = 'none';
+        action.run();
+      }
+      : null;
+    if (action) toastActionEl.textContent = action.label;
+    toastEl.style.display = 'flex';
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => (toastEl.style.display = 'none'), 2200);
+    toastTimer = setTimeout(() => (toastEl.style.display = 'none'), action ? 8000 : 2200);
+  }
+
+  // Resolves to null (after telling the user) when the extension was reloaded
+  // underneath this page.
+  function sendToDogear(msg) {
+    const reloaded = () => {
+      toast('Dogear was reloaded — refresh this page to reconnect.');
+      return null;
+    };
+    try {
+      return chrome.runtime.sendMessage(msg).catch(reloaded);
+    } catch (e) {
+      return Promise.resolve(reloaded());
+    }
+  }
+
+  // ---------- export popup (hotkey / context menu) ----------
+
+  let exportLast = 'copy';
+
+  function closeExport() {
+    exportEl.style.display = 'none';
+  }
+
+  function openExport({ count, targets, last }) {
+    attachHost();
+    // Pressing the export hotkey again while the popup is up repeats the
+    // last-used destination: two keystrokes for the common case.
+    if (exportEl.style.display === 'block') {
+      runExport(exportLast);
+      return;
+    }
+    exportLast = targets.some((target) => target.id === last) ? last : targets[0].id;
+    exportTitleEl.textContent = `Send ${count} ${count === 1 ? 'question' : 'questions'}`;
+    exportTargetsEl.replaceChildren(...targets.map((target, index) => {
+      const button = document.createElement('button');
+      button.dataset.target = target.id;
+      const key = document.createElement('kbd');
+      key.textContent = String(index + 1);
+      button.append(key, target.label);
+      button.addEventListener('click', () => runExport(target.id));
+      return button;
+    }));
+    exportEl.style.display = 'block';
+    // Focusing the last-used button makes Enter send there natively.
+    (exportTargetsEl.querySelector(`[data-target="${exportLast}"]`) || exportEl).focus();
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      // Insecure origins have no async clipboard; fall back to a selection copy.
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      shadow.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      area.remove();
+      return ok;
+    }
+  }
+
+  function openQueueAction() {
+    return { label: 'Open queue', run: () => sendToDogear({ type: 'dogear-open-panel' }) };
+  }
+
+  async function runExport(target) {
+    closeExport();
+    const response = await sendToDogear({ type: 'dogear-export', target });
+    if (!response) return;
+    if (!response.ok) {
+      toast(`Dogear: ${response.note}`);
+      return;
+    }
+    const copied = response.copy == null ? true : await copyText(response.copy);
+    if (target === 'copy') {
+      const n = response.imageCount;
+      if (!copied) toast('Dogear: could not copy — use “Copy prompt” in the queue.', openQueueAction());
+      else if (n) toast(`Prompt copied — attach its ${n} ${n === 1 ? 'image' : 'images'} from the queue.`, openQueueAction());
+      else toast(response.warning || 'Prompt copied — paste it into any chat.');
+      return;
+    }
+    toast(copied ? response.note : response.failedNote, response.outcome.imagesFailed ? openQueueAction() : undefined);
+  }
+
+  exportEl.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeExport();
+      return;
+    }
+    const button = exportTargetsEl.children[Number(event.key) - 1];
+    if (/^[1-9]$/.test(event.key) && button) {
+      event.preventDefault();
+      runExport(button.dataset.target);
+    }
+  });
+  for (const type of ['keyup', 'keypress']) {
+    exportEl.addEventListener(type, (e) => e.stopPropagation());
+  }
+
+  function showCleared(count) {
+    toast(`Dogear: cleared ${count} ${count === 1 ? 'question' : 'questions'}.`, {
+      label: 'Undo',
+      run: async () => {
+        const response = await sendToDogear({ type: 'dogear-undo-clear' });
+        if (response?.restored) toast(`Dogear: restored ${response.restored} ${response.restored === 1 ? 'question' : 'questions'}.`);
+        else if (response) toast('Dogear: nothing to restore.');
+      },
+    });
   }
 
   async function saveQuestion() {
@@ -802,7 +969,10 @@
   document.addEventListener(
     'mousedown',
     (e) => {
-      if (!e.composedPath().includes(host)) closePopover();
+      if (!e.composedPath().includes(host)) {
+        closePopover();
+        closeExport();
+      }
     },
     true,
   );
@@ -820,10 +990,14 @@
       attachHost();
       openPagePopover();
     }
+    if (msg && msg.type === 'dogear-open-export') openExport(msg);
+    if (msg && msg.type === 'dogear-cleared') showCleared(msg.count);
+    if (msg && msg.type === 'dogear-toast') toast(msg.text);
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.queue) refreshHighlights();
+    if (area === 'local' && changes.appearance) applyAppearance(changes.appearance.newValue);
   });
 
   // Inside the bundled PDF.js viewer, pages (and their text layers) render

@@ -8,6 +8,9 @@ struct ContentView: View {
     let captureText: () -> Void
     let captureImage: () -> Void
     let deliver: (DeliveryTarget) -> Void
+    let clearQueue: () -> Void
+    let undoClear: () -> Void
+    let openSettings: () -> Void
     let routingChanged: () -> Void
     let openAccessibilitySettings: () -> Void
     let refreshAccessibility: () -> Void
@@ -121,12 +124,8 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
-                Menu {
-                    Toggle("Prefer Chrome extension", isOn: $state.preferChromeExtension)
-                    Toggle("Prefer VS Code extension", isOn: $state.preferVSCodeExtension)
-                    Divider()
-                    Text("Desktop hotkey pauses in preferred apps")
-                } label: { Image(systemName: "gearshape") }
+                Button(action: openSettings) { Image(systemName: "gearshape") }
+                    .help("Settings: shortcuts, appearance, extension routing")
             }
         }
         .onChange(of: state.preferChromeExtension) { _ in routingChanged() }
@@ -186,12 +185,22 @@ struct ContentView: View {
             Spacer()
             BrandMark(height: 44)
             Text("Mark questions without leaving your flow").font(DogearTypography.headline).foregroundStyle(DogearTheme.text)
-            Text("Press ⌃⌥Q in any app. Dogear captures selected text, or starts region capture when there is no selection.")
+            Text(emptyHint)
                 .multilineTextAlignment(.center).foregroundStyle(DogearTheme.textMuted)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
+    }
+
+    private var emptyHint: String {
+        let key = { (action: HotKeyAction) in state.shortcuts.combo(for: action)?.displayString }
+        var text = "Press \(key(.ask) ?? "the Ask shortcut") in any app. Dogear captures selected text, "
+            + "or starts region capture when there is no selection."
+        if let export = key(.export), let clear = key(.clear) {
+            text += " \(export) exports the queue; \(clear) clears it (with Undo)."
+        }
+        return text
     }
 
     private var footer: some View {
@@ -206,7 +215,10 @@ struct ContentView: View {
             HStack {
                 Text(state.status).font(DogearTypography.caption).foregroundStyle(DogearTheme.textMuted).lineLimit(1)
                 Spacer()
-                Button("Clear", action: state.clear).disabled(state.queue.isEmpty)
+                if state.clearUndoOffered {
+                    Button("Undo clear", action: undoClear)
+                }
+                Button("Clear", action: clearQueue).disabled(state.queue.isEmpty)
             }
         }
         .padding(12)

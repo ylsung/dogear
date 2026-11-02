@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Combine
 import DogearCore
 import SwiftUI
 
@@ -30,6 +31,9 @@ struct DogearDesktopApp: App {
                 captureText: delegate.captureSelection,
                 captureImage: delegate.captureRegion,
                 deliver: delegate.deliver,
+                clearQueue: delegate.clearQueue,
+                undoClear: delegate.undoClear,
+                openSettings: delegate.openSettings,
                 routingChanged: delegate.updateHotKeyRouting,
                 openAccessibilitySettings: delegate.openAccessibilitySettings,
                 refreshAccessibility: delegate.refreshAccessibility,
@@ -42,23 +46,14 @@ struct DogearDesktopApp: App {
             .environment(\.font, DogearTypography.body)
         }
         .defaultSize(width: 430, height: 680)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…", action: delegate.openSettings).keyboardShortcut(",")
+            }
+        }
 
         MenuBarExtra {
-            Button("Capture selection or region  ⌃⌥Q", action: delegate.captureSelection)
-            Button("Capture screen region", action: delegate.captureRegion)
-            Menu("Export prompt  ⌃⌥E") {
-                Button("Choose destination…", action: delegate.showExportChooser)
-                Divider()
-                Button("Copy prompt", action: delegate.copyPrompt)
-                Button("Send to Claude") { delegate.export(to: .claude) }
-                Button("Send to Codex") { delegate.export(to: .codex) }
-                Button("Send to Terminal") { delegate.export(to: .terminal) }
-            }
-            Divider()
-            Button("Enable Accessibility…", action: delegate.requestAccessibility)
-            Button("Enable Screen Recording…", action: delegate.requestScreenRecording)
-            Button("Show queue", action: delegate.showWindow)
-            Button("Quit Dogear") { NSApp.terminate(nil) }
+            MenuBarContent(state: delegate.state, delegate: delegate)
         } label: {
             if let icon = BrandImages.menuBar {
                 Image(nsImage: icon).accessibilityLabel("Dogear")
@@ -66,6 +61,39 @@ struct DogearDesktopApp: App {
                 Label("Dogear", systemImage: "bookmark.square")
             }
         }
+    }
+}
+
+/// Menu bar items; a view of its own so the shortcut labels follow Settings.
+private struct MenuBarContent: View {
+    @ObservedObject var state: AppState
+    let delegate: AppDelegate
+
+    private func label(_ title: String, _ action: HotKeyAction) -> String {
+        state.shortcuts.combo(for: action).map { "\(title)  \($0.displayString)" } ?? title
+    }
+
+    var body: some View {
+        Button(label("Capture selection or region", .ask), action: delegate.captureSelection)
+        Button("Capture screen region", action: delegate.captureRegion)
+        Menu(label("Export prompt", .export)) {
+            Button("Choose destination…", action: delegate.showExportChooser)
+            Divider()
+            Button("Copy prompt", action: delegate.copyPrompt)
+            Button("Send to Claude") { delegate.export(to: .claude) }
+            Button("Send to Codex") { delegate.export(to: .codex) }
+            Button("Send to Terminal") { delegate.export(to: .terminal) }
+        }
+        Button(label("Clear queue", .clear), action: delegate.clearQueue)
+        if state.clearUndoOffered {
+            Button("Undo clear", action: delegate.undoClear)
+        }
+        Divider()
+        Button("Enable Accessibility…", action: delegate.requestAccessibility)
+        Button("Enable Screen Recording…", action: delegate.requestScreenRecording)
+        Button("Show queue", action: delegate.showWindow)
+        Button("Settings…", action: delegate.openSettings)
+        Button("Quit Dogear") { NSApp.terminate(nil) }
     }
 }
 
@@ -84,10 +112,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private weak var composerReturnApplication: NSRunningApplication?
     private var queueWindow: NSWindow?
     private var restoreQueueAfterComposer = false
+    private var settingsWindow: NSWindow?
+    private let toast = ToastPresenter()
+    private var recordingShortcut = false
+    private var subscriptions: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        hotkeys.capture = captureSelection
-        hotkeys.export = showExportChooser
+        hotkeys.handlers = [
+            .ask: captureSelection,
+            .export: showExportChooser,
+            .clear: clearQueue,
+        ]
+        hotkeys.shortcuts = state.shortcuts
+        state.appearance.apply()
+        state.$shortcuts.dropFirst().sink { [weak self] shortcuts in
+            self?.hotkeys.shortcuts = shortcuts
+            // @Published fires before the value is stored; route on the next turn.
+            DispatchQueue.main.async { self?.updateHotKeyRouting() }
+        }.store(in: &subscriptions)
+        state.$preferChromeExtension.combineLatest(state.$preferVSCodeExtension).dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateHotKeyRouting() }
+        }.store(in: &subscriptions)
         NSApp.servicesProvider = self
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -237,26 +282,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func export(to target: DeliveryTarget) {
         exportPanel?.orderOut(nil)
+        if let destination = ExportDestination(rawValue: target.rawValue) { state.lastExportDestination = destination }
         deliver(target)
     }
 
     func copyPrompt() {
         guard !state.queue.isEmpty else { return }
         exportPanel?.orderOut(nil)
+        state.lastExportDestination = .copy
         state.copyPrompt()
     }
 
+    func export(_ destination: ExportDestination) {
+        if let target = destination.deliveryTarget { export(to: target) }
+        else { copyPrompt() }
+    }
+
+    /// The export hotkey. Pressing it again while the chooser is up sends to
+    /// the last-used destination, so the common case is two keystrokes.
     func showExportChooser() {
-        guard !state.queue.isEmpty else { return }
+        guard !state.queue.isEmpty else {
+            toast.show("Dogear: the queue is empty.")
+            return
+        }
+        if let exportPanel, exportPanel.isVisible {
+            export(state.lastExportDestination)
+            return
+        }
         let panel = exportPanel ?? makeExportPanel()
         panel.contentViewController = NSHostingController(rootView: ExportPromptView(
             state: state,
-            copy: { [weak self] in self?.copyPrompt() },
-            deliver: { [weak self] target in self?.export(to: target) },
+            choose: { [weak self] destination in self?.export(destination) },
             cancel: { [weak self] in self?.exportPanel?.orderOut(nil) }
         ))
         panel.center()
         panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The clear hotkey: no confirmation, an Undo in the toast instead.
+    func clearQueue() {
+        let cleared = state.clear()
+        guard cleared > 0 else {
+            toast.show("Dogear: the queue is already empty.")
+            return
+        }
+        toast.show(
+            "Dogear: cleared \(cleared) \(cleared == 1 ? "question" : "questions").",
+            actionTitle: "Undo",
+            action: { [weak self] in self?.undoClear() }
+        )
+    }
+
+    func undoClear() {
+        let restored = state.undoClear()
+        toast.show(restored > 0
+            ? "Dogear: restored \(restored) \(restored == 1 ? "question" : "questions")."
+            : "Dogear: nothing to restore.")
+    }
+
+    func openSettings() {
+        let window = settingsWindow ?? {
+            let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(
+                state: state,
+                recordingChanged: { [weak self] recording in
+                    self?.recordingShortcut = recording
+                    self?.updateHotKeyRouting()
+                }
+            )))
+            window.title = "Dogear Settings"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            settingsWindow = window
+            return window
+        }()
+        window.center()
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -396,7 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if AXIsProcessTrusted() {
             state.showAccessibilityNotice = false
             state.accessibilityRecoveryError = nil
-            state.status = "Accessibility enabled — return to your source and press ⌃⌥Q."
+            state.status = "Accessibility enabled — return to your source and press ⌘⇧E."
             updateHotKeyRouting()
             return
         }
@@ -463,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             preferChromeExtension: state.preferChromeExtension,
             preferVSCodeExtension: state.preferVSCodeExtension
         )
-        hotkeys.setEnabled(owner == .desktop)
+        state.unavailableShortcuts = hotkeys.setEnabled(owner == .desktop && !recordingShortcut)
     }
 
     private func rememberTerminal(_ source: Source) {
@@ -473,8 +574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 private struct ExportPromptView: View {
     @ObservedObject var state: AppState
-    let copy: () -> Void
-    let deliver: (DeliveryTarget) -> Void
+    let choose: (ExportDestination) -> Void
     let cancel: () -> Void
 
     var body: some View {
@@ -485,20 +585,47 @@ private struct ExportPromptView: View {
                     .font(DogearTypography.callout).foregroundStyle(DogearTheme.textMuted)
             }
             HStack {
-                Button("Copy", action: copy)
-                Spacer()
-                Button("Claude") { deliver(.claude) }.buttonStyle(.borderedProminent)
-                Button("Codex") { deliver(.codex) }.buttonStyle(.borderedProminent)
-                Button("Terminal") { deliver(.terminal) }.buttonStyle(.borderedProminent)
+                ForEach(ExportDestination.allCases, id: \.self) { destination in
+                    destinationButton(destination)
+                }
             }
             HStack {
+                Text("1–\(ExportDestination.allCases.count) or click · Enter: \(state.lastExportDestination.title) (last used)")
+                    .font(DogearTypography.caption).foregroundStyle(DogearTheme.textMuted)
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                // Enter repeats the last-used destination; a button carries
+                // only one shortcut, so this one is invisible.
+                Button("") { choose(state.lastExportDestination) }
+                    .keyboardShortcut(.defaultAction)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
             }
         }
         .padding(20)
-        .frame(width: 390)
+        .frame(width: 420)
+        .font(DogearTypography.body)
         .background(DogearTheme.panel)
         .tint(DogearTheme.primary)
+    }
+
+    @ViewBuilder
+    private func destinationButton(_ destination: ExportDestination) -> some View {
+        let button = Button { choose(destination) } label: {
+            HStack(spacing: 5) {
+                Text("\(destination.number)")
+                    .font(DogearTypography.caption2.monospacedDigit())
+                    .padding(.horizontal, 4)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.22)))
+                Text(destination.title)
+            }
+        }
+        .keyboardShortcut(KeyEquivalent(Character("\(destination.number)")), modifiers: [])
+        if destination == state.lastExportDestination {
+            button.buttonStyle(.borderedProminent)
+        } else {
+            button.buttonStyle(.bordered)
+        }
     }
 }

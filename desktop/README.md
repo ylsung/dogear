@@ -59,7 +59,7 @@ copy, preventing the running process and on-disk bundle from getting out of sync
 
 ## Workflow
 
-1. Press `Control+Option+Q` in Claude, Codex/ChatGPT, a terminal, a PDF viewer,
+1. Press `⌘⇧E` in Claude, Codex/ChatGPT, a terminal, a PDF viewer,
    or another desktop app. Dogear captures selected text when available. With
    no text selection, it immediately opens screen-region capture for visual
    context such as an HTML/Markdown preview, mobile Simulator, chart, or figure.
@@ -79,7 +79,27 @@ copy, preventing the running process and on-disk bundle from getting out of sync
    Dogear activates an already-running destination and pastes text and images in
    their prompt order. It never synthesizes Enter. You can also export without
    opening the queue: use **Export prompt** in the menu-bar menu, or press
-   `Control+Option+E` to open the compact destination chooser.
+   `⌘⇧X` to open the compact destination chooser. Press `1`–`4` (Copy, Claude,
+   Codex, Terminal), `Enter` for the last one used, or `⌘⇧X` again to repeat it.
+4. Press `⌘⇧0` to clear the queue. There is no confirmation: a small notice
+   offers **Undo**, and **Undo clear** stays in the menu-bar menu and queue
+   window, for five minutes.
+
+### Settings
+
+Open **Settings…** (`⌘,`, the menu-bar menu, or the gear in the queue window):
+
+- **Keyboard shortcuts** — click a shortcut and press new keys (⌘, ⌃, or ⌥
+  required; Delete removes it, Esc cancels). A warning icon marks a shortcut
+  macOS would not register. The defaults match the Chrome and VS Code
+  extensions. These are system-wide shortcuts, so they take the combination
+  from every other app while Dogear is running.
+- **Extensions** — whether Chrome and VS Code / Cursor hand the shortcuts to
+  their Dogear extension (see below).
+- **Appearance** — Match system, Light, or Dark.
+
+The desktop prompt uses Dogear's XML format, so there is no prompt-language
+choice here.
 
 For selected text in apps that support macOS Services, right-click and choose
 **Services → Ask with Dogear**. The selected text opens directly in the compact
@@ -92,12 +112,11 @@ is not running, Dogear copies a text fallback containing local image paths.
 
 ### Capture routing
 
-The gear menu contains two settings, both enabled by default:
+Settings → **Extensions** has two switches, both on by default:
 
-- **Prefer Chrome extension** unregisters the desktop hotkey while Chrome is
-  frontmost. Use the Chrome extension's configured shortcut there.
-- **Prefer VS Code extension** does the same for VS Code and Cursor, allowing
-  the editor extension to own `Control+Option+Q`.
+- **Chrome** unregisters all three desktop shortcuts while Chrome is
+  frontmost, so the Chrome extension's identical shortcuts handle them.
+- **VS Code / Cursor** does the same for the editor extension.
 
 Turn either preference off to use desktop capture in that app. Switching apps
 updates hotkey ownership automatically, so two Dogears never process one keypress.

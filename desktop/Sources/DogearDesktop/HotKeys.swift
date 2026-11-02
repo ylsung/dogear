@@ -1,22 +1,41 @@
 import Carbon.HIToolbox
+import DogearCore
 
+/// System-wide hotkeys. Registered combos are taken from every app, so all of
+/// them are released while a preferred extension's app (Chrome, VS Code) is
+/// frontmost — the extensions bind the same keys by default.
 @MainActor
 final class HotKeyMonitor {
-    private var captureHotKey: EventHotKeyRef?
-    private var exportHotKey: EventHotKeyRef?
+    private var registered: [HotKeyAction: EventHotKeyRef] = [:]
     private var eventHandler: EventHandlerRef?
-    var capture: (() -> Void)?
-    var export: (() -> Void)?
+    var handlers: [HotKeyAction: () -> Void] = [:]
+    var shortcuts = ShortcutSettings()
 
-    var isEnabled: Bool { captureHotKey != nil }
+    var isEnabled: Bool { !registered.isEmpty }
 
-    func setEnabled(_ enabled: Bool) {
-        registerExportAndHandler()
-        if enabled { registerCapture() }
-        else { unregisterCapture() }
+    /// Returns the actions whose combo macOS refused (already registered by
+    /// another app), so Settings can flag them.
+    @discardableResult
+    func setEnabled(_ enabled: Bool) -> Set<HotKeyAction> {
+        installHandler()
+        unregisterAll()
+        guard enabled else { return [] }
+        var unavailable: Set<HotKeyAction> = []
+        for (index, action) in HotKeyAction.allCases.enumerated() {
+            guard let combo = shortcuts.combo(for: action) else { continue }
+            var ref: EventHotKeyRef?
+            let identifier = EventHotKeyID(signature: fourCharacterCode("DOGR"), id: UInt32(index + 1))
+            let status = RegisterEventHotKey(
+                combo.keyCode, combo.modifiers, identifier,
+                GetApplicationEventTarget(), 0, &ref
+            )
+            if status == noErr, let ref { registered[action] = ref }
+            else { unavailable.insert(action) }
+        }
+        return unavailable
     }
 
-    private func registerExportAndHandler() {
+    private func installHandler() {
         guard eventHandler == nil else { return }
         var specification = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -36,12 +55,10 @@ final class HotKeyMonitor {
             )
             guard status == noErr else { return OSStatus(eventNotHandledErr) }
             let monitor = Unmanaged<HotKeyMonitor>.fromOpaque(userData).takeUnretainedValue()
+            let index = Int(identifier.id) - 1
             Task { @MainActor in
-                switch identifier.id {
-                case 1: monitor.capture?()
-                case 2: monitor.export?()
-                default: break
-                }
+                guard HotKeyAction.allCases.indices.contains(index) else { return }
+                monitor.handlers[HotKeyAction.allCases[index]]?()
             }
             return noErr
         }
@@ -49,41 +66,15 @@ final class HotKeyMonitor {
             GetApplicationEventTarget(), callback, 1, &specification,
             Unmanaged.passUnretained(self).toOpaque(), &eventHandler
         )
-        let exportIdentifier = EventHotKeyID(signature: fourCharacterCode("DOGR"), id: 2)
-        let exportStatus = RegisterEventHotKey(
-            UInt32(kVK_ANSI_E), UInt32(controlKey | optionKey), exportIdentifier,
-            GetApplicationEventTarget(), 0, &exportHotKey
-        )
-        if exportStatus != noErr { unregister() }
     }
 
-    private func registerCapture() {
-        guard captureHotKey == nil, eventHandler != nil else { return }
-        let identifier = EventHotKeyID(signature: fourCharacterCode("DOGR"), id: 1)
-        let status = RegisterEventHotKey(
-            UInt32(kVK_ANSI_Q), UInt32(controlKey | optionKey), identifier,
-            GetApplicationEventTarget(), 0, &captureHotKey
-        )
-        if status != noErr { unregisterCapture() }
-    }
-
-    private func unregisterCapture() {
-        if let captureHotKey { UnregisterEventHotKey(captureHotKey) }
-        captureHotKey = nil
-    }
-
-    private func unregister() {
-        if let captureHotKey { UnregisterEventHotKey(captureHotKey) }
-        if let exportHotKey { UnregisterEventHotKey(exportHotKey) }
-        if let eventHandler { RemoveEventHandler(eventHandler) }
-        captureHotKey = nil
-        exportHotKey = nil
-        eventHandler = nil
+    private func unregisterAll() {
+        for ref in registered.values { UnregisterEventHotKey(ref) }
+        registered = [:]
     }
 
     deinit {
-        if let captureHotKey { UnregisterEventHotKey(captureHotKey) }
-        if let exportHotKey { UnregisterEventHotKey(exportHotKey) }
+        for ref in registered.values { UnregisterEventHotKey(ref) }
         if let eventHandler { RemoveEventHandler(eventHandler) }
     }
 

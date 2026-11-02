@@ -19,13 +19,16 @@ npm run build     # copies shared files from ../extension and bundles src/
 - **Install for real**: `npx @vscode/vsce package` then
   `code --install-extension dogear-vscode-0.2.1.vsix`.
 
+`media/compose.js` builds the prompt; both the sidebar and the export shortcut
+(extension host) load it, so they always compose the same text.
+
 `media/theme.js`, `media/prompts/`, and `media/fonts/` are build-time copies —
 the source of truth lives in `../extension/`. Edit there, rebuild here.
 
 ## Usage
 
 1. Choose the context:
-   - Select text in any editor → press `⌃⌥Q` (Mac) / `Ctrl+Alt+Q`
+   - Select text in any editor → press `⌘⇧E` (Mac) / `Ctrl+Shift+E`
      (Windows/Linux), or right-click → **Dogear: Add query for selection**.
    - Press the same hotkey without selected text to capture a screen region on
      local macOS, then ask about the screenshot. On Windows, Linux, and remote
@@ -65,10 +68,30 @@ inside the queue JSON or the prompt. Orphaned files are removed when images or
 questions are deleted. Dogear only gives a destination access when you choose a
 delivery or copy action.
 
+### Shortcuts and settings
+
+| Action | Mac | Windows / Linux | Scope |
+|---|---|---|---|
+| Ask about the selection (no selection: screenshot) | `⌘⇧E` | `Ctrl+Shift+E` | editor focus, Markdown preview |
+| Export the queue | `⌘⇧X` | `Ctrl+Shift+X` | anywhere |
+| Clear the queue | `⌘⇧0` | `Ctrl+Shift+0` | anywhere |
+
+These replace VS Code's own `⌘⇧E` (Explorer, while an editor has focus) and
+`⌘⇧X` (Extensions view). Rebind any of them in Keyboard Shortcuts (the ⌨ button
+in the Dogear view title, or **Dogear: Keyboard shortcuts**).
+
+- **Export** opens a quick pick: **Copy prompt**, **→ Claude Code**, **→ Codex**.
+  Type `1`–`3` to pick one, press `Enter` for the last one used (pre-selected),
+  or press `⌘⇧X` again to repeat it.
+- **Clear** has no confirmation; its notification offers **Undo** for five
+  minutes (also **Dogear: Undo clear queue** in the Command Palette).
+- Settings (⚙ in the Dogear view title): `dogear.appearance` (auto / light /
+  dark) and `dogear.promptLanguage`.
+
 ### Markdown previews and AI chat views
 
 - In VS Code's built-in Markdown preview, select rendered text and press
-  `⌃⌥Q` / `Ctrl+Alt+Q`, or right-click → **Dogear: Add selected preview text**.
+  `⌘⇧E` / `Ctrl+Shift+E`, or right-click → **Dogear: Add selected preview text**.
 - The same right-click capture is available in Codex and Claude Code chats.
   This webview path briefly uses the clipboard and restores its previous
   contents immediately.

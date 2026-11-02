@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { AssetStore } from './assets';
 
 type ChatTarget = 'claude' | 'codex';
 
@@ -26,6 +27,14 @@ const SIDEBAR_TARGETS: Record<ChatTarget, SidebarTarget> = {
     openCommand: 'chatgpt.openSidebar',
   },
 };
+
+/** Delivery labels for queued image ids, numbered like the composed prompt. */
+export function deliveryAssets(assets: AssetStore, ids: readonly string[]): DeliveryAsset[] {
+  return [...new Set(ids)].flatMap((id, index) => {
+    const uri = assets.uri(id);
+    return uri ? [{ id, label: `Image I${index + 1}`, uri }] : [];
+  });
+}
 
 function promptWithLocalPaths(prompt: string, assets: readonly DeliveryAsset[]): string {
   if (!assets.length) return prompt;

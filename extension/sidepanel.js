@@ -3,10 +3,7 @@
 // Apply the global theme (see theme.js) as CSS variables + branded text.
 {
   const T = globalThis.DOGEAR_THEME;
-  const vars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
-  const palette =
-    `:root { ${vars(T.colors)} --font: ${T.font.family}; }\n` +
-    `@media (prefers-color-scheme: dark) { :root { ${vars(T.colorsDark)} color-scheme: dark; } }`;
+  const palette = globalThis.DOGEAR_THEME_CSS(':root', `--font: ${T.font.family};`);
   const faces = (T.font.faces || [])
     .map(
       (f) =>
@@ -32,6 +29,13 @@ ${faces}`;
   darkQuery.addEventListener('change', reportScheme);
 }
 
+// Appearance setting (Options page): "system" leaves the OS preference in charge.
+function applyAppearance(appearance) {
+  if (appearance === 'light' || appearance === 'dark') document.documentElement.dataset.theme = appearance;
+  else delete document.documentElement.dataset.theme;
+}
+chrome.storage.local.get('appearance').then(({ appearance }) => applyAppearance(appearance));
+
 const listEl = document.getElementById('list');
 const emptyEl = document.getElementById('empty');
 const countEl = document.getElementById('count');
@@ -39,6 +43,7 @@ const noteEl = document.getElementById('note');
 const M = globalThis.DOGEAR_MODEL;
 const ASSETS = globalThis.DOGEAR_ASSETS;
 const COMPOSER = globalThis.DOGEAR_COMPOSER;
+const ACTIONS = globalThis.DOGEAR_ACTIONS;
 const handoffEl = document.getElementById('manual-handoff');
 const handoffSummaryEl = document.getElementById('manual-summary');
 const handoffAssetsEl = document.getElementById('manual-assets');
@@ -50,7 +55,6 @@ let renderRequested = false;
 let renderRunning = false;
 let manualHandoffRenderVersion = 0;
 
-const SOFT_CAP = 10;
 const QUESTION_HISTORY_LIMIT = 5;
 const questionUndoStack = [];
 const questionRedoStack = [];
@@ -99,6 +103,7 @@ async function collectGarbage(queue, retainedAssetIds = []) {
     ...queue.flatMap(M.assetIdsOf),
     ...retainedAssetIds,
     ...questionHistoryAssetIds,
+    ...(await ACTIONS.clearedAssetIds()),
   ];
   await ASSETS.removeUnreferenced(referenced);
 }
@@ -557,13 +562,21 @@ document.addEventListener('keydown', (event) => {
   if (target instanceof Element &&
       (target.closest('.dogear-composer, input, textarea, select') || target.isContentEditable)) return;
   const stack = event.shiftKey ? questionRedoStack : questionUndoStack;
-  if (!stack.length) return;
-  event.preventDefault();
-  queueQuestionHistory(event.shiftKey);
+  if (stack.length) {
+    event.preventDefault();
+    queueQuestionHistory(event.shiftKey);
+  } else if (!event.shiftKey) {
+    // Nothing left to restore one by one: undo a recent Clear instead.
+    event.preventDefault();
+    questionHistoryMutation = questionHistoryMutation.then(async () => {
+      const restored = await ACTIONS.undoClear();
+      if (restored) note(`Restored ${restored} ${restored === 1 ? 'question' : 'questions'}.`);
+    });
+  }
 });
 
 // ---------- prompt composition ----------
-// All user-facing prompt text comes from prompts/<lang>.js template packs.
+// Composition itself lives in actions.js, shared with the hotkey export popup.
 
 let promptLang = globalThis.DOGEAR_PROMPT_DEFAULT_LANG;
 
@@ -574,8 +587,8 @@ for (const [code, pack] of Object.entries(globalThis.DOGEAR_PROMPTS)) {
   opt.textContent = pack.name;
   langSelect.appendChild(opt);
 }
-chrome.storage.local.get('promptLang').then(({ promptLang: stored }) => {
-  if (stored && globalThis.DOGEAR_PROMPTS[stored]) promptLang = stored;
+ACTIONS.getPromptLang().then((lang) => {
+  promptLang = lang;
   langSelect.value = promptLang;
 });
 langSelect.addEventListener('change', () => {
@@ -583,111 +596,19 @@ langSelect.addEventListener('change', () => {
   chrome.storage.local.set({ promptLang });
 });
 
-// Privacy: local file:// paths reveal the username and folder structure, and
-// the composed prompt leaves the machine — cite only the filename for those.
-// The full URL stays on the item for navigation and grouping.
-function sourceCitation(item, P) {
-  const source = M.sourceOf(item);
-  if (!/^file:/i.test(source.url)) return { title: source.title, url: source.url };
-  const filename = decodeURIComponent(source.url.split('#')[0].split('?')[0].split('/').pop());
-  const title = /^file:/i.test(source.title) ? filename : source.title;
-  return { title, url: `${P.localFile || 'local file'}: ${filename}` };
-}
-
-function safeFilename(name) {
-  const leaf = String(name || 'image.png').split(/[\\/]/).pop();
-  return leaf.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '') || 'image.png';
-}
-
-async function buildAssetPlan(queue) {
-  const ids = [];
-  for (const item of queue) {
-    for (const context of item.selectedContext) {
-      for (const part of context.parts) {
-        if (part.type === 'asset' && !ids.includes(part.assetId)) ids.push(part.assetId);
-      }
-    }
-    for (const part of item.message.parts) {
-      if (part.type === 'asset' && !ids.includes(part.assetId)) ids.push(part.assetId);
-    }
-  }
-  const assets = [];
-  for (let index = 0; index < ids.length; index += 1) {
-    const record = await ASSETS.get(ids[index]);
-    if (!record) continue;
-    const shortLabel = `I${index + 1}`;
-    assets.push({
-      id: record.id,
-      label: `Image ${shortLabel}`,
-      deliveredName: `${shortLabel}-${safeFilename(record.displayName)}`,
-      record,
-    });
-  }
-  return assets;
-}
-
-function renderParts(parts, labels) {
-  return parts.map((part) =>
-    part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
-  ).join('');
-}
-
-function composePrompt(queue, assets) {
-  const P = globalThis.DOGEAR_PROMPTS[promptLang] || globalThis.DOGEAR_PROMPTS.en;
-  const lines = [P.header(queue.length)];
-  const labels = new Map(assets.map((asset) => [asset.id, asset.label]));
-
-  let lastUrl = null;
-  let sourceIdx = 0;
-  queue.forEach((item, idx) => {
-    const source = M.sourceOf(item);
-    const locator = M.locatorOf(item);
-    if (source.url !== lastUrl) {
-      sourceIdx += 1;
-      const letter = String.fromCharCode(64 + sourceIdx); // A, B, C…
-      const cite = sourceCitation(item, P);
-      lines.push('', P.source(letter, cite.title, cite.url));
-      lastUrl = source.url;
-    }
-    const where = locator.page ? P.pdfPage(locator.page) : '';
-    const contextParts = item.selectedContext.flatMap((context) => context.parts);
-    const contextText = renderParts(contextParts, labels);
-    const hasContextAsset = contextParts.some((part) => part.type === 'asset');
-    lines.push('', locator.type === 'unanchored'
-      ? P.pageQuestion(idx + 1)
-      : hasContextAsset
-        ? P.multimodalSelection(idx + 1, where, contextText)
-        : P.excerpt(idx + 1, where, contextText));
-    if (locator.prefix || locator.suffix) {
-      lines.push(P.context(locator.prefix, locator.suffix));
-    }
-    lines.push(P.question(renderParts(item.message.parts, labels)));
-  });
-
-  if (assets.length) {
-    lines.push('', P.attachmentsHeader);
-    assets.forEach((asset) => lines.push(P.attachment(asset.label, asset.deliveredName)));
-  }
-
-  return lines.join('\n');
-}
-
 async function composeOrWarn() {
-  const queue = await getQueue();
-  if (!queue.length) {
-    note('Queue is empty.');
+  const delivery = await ACTIONS.compose(promptLang);
+  if (delivery.error) {
+    note(delivery.error);
     return null;
   }
-  if (queue.length > SOFT_CAP) {
-    note(`Heads up: ${queue.length} queries in one prompt may dilute answer quality.`);
-  }
-  const assets = await buildAssetPlan(queue);
-  return { text: composePrompt(queue, assets), assets };
+  if (delivery.warning) note(delivery.warning);
+  return delivery;
 }
 
 async function renderManualHandoff(queue) {
   const version = ++manualHandoffRenderVersion;
-  const assets = await buildAssetPlan(queue);
+  const assets = await ACTIONS.buildAssetPlan(queue);
   if (version !== manualHandoffRenderVersion) return;
   handoffObjectUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
   handoffAssetsEl.replaceChildren();
@@ -749,25 +670,23 @@ async function renderManualHandoff(queue) {
 document.getElementById('copy').addEventListener('click', async () => {
   const delivery = await composeOrWarn();
   if (!delivery) return;
+  chrome.storage.local.set({ lastExportTarget: 'copy' });
   await navigator.clipboard.writeText(delivery.text);
-  if (delivery.assets.length) {
-    handoffEl.open = true;
-    note(`Prompt copied — open the destination chat, then click “Attach all ${delivery.assets.length} ${delivery.assets.length === 1 ? 'image' : 'images'} to this tab.”`);
-  } else {
-    note('Prompt copied — paste it into any chat.');
-  }
+  if (delivery.assets.length) handoffEl.open = true;
+  note(ACTIONS.copyNote(delivery));
 });
 
+// No confirmation: Clear is undoable (Command/Ctrl+Z here, or Undo in the
+// page toast when cleared by hotkey), which keeps it a one-keystroke action.
 document.getElementById('clear').addEventListener('click', async () => {
-  const queue = await getQueue();
-  if (!queue.length) return;
-  if (confirm(`Remove all ${queue.length} queries?`)) {
-    questionUndoStack.length = 0;
-    questionRedoStack.length = 0;
-    await setQueue([]);
-    await collectGarbage([]);
-  }
+  questionUndoStack.length = 0;
+  questionRedoStack.length = 0;
+  const cleared = await ACTIONS.clearQueue();
+  if (!cleared) return;
+  note(`Cleared ${cleared} ${cleared === 1 ? 'question' : 'questions'} — press Command/Ctrl+Z to restore.`);
 });
+
+document.getElementById('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
 document.getElementById('capture-region').addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -793,129 +712,9 @@ document.getElementById('ask-page').addEventListener('click', async () => {
   }
 });
 
-// Runs inside the chat tab. Finds the composer and inserts text at the end,
-// leaving the prompt in the box for the user to review and send (PRD decision).
-function injectPrompt(text) {
-  const el =
-    document.querySelector('#prompt-textarea') || // chatgpt.com (ProseMirror div)
-    document.querySelector('div[contenteditable="true"].ProseMirror') || // claude.ai
-    document.querySelector('main div[contenteditable="true"]') ||
-    document.querySelector('main textarea');
-  if (!el) return false;
-  el.focus();
-  if (el.tagName === 'TEXTAREA') {
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      'value',
-    ).set;
-    setter.call(el, el.value ? `${el.value}\n\n${text}` : text);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    return true;
-  }
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  range.collapse(false);
-  const sel = window.getSelection();
-  sel.removeAllRanges();
-  sel.addRange(range);
-  return document.execCommand('insertText', false, text);
-}
-
-// Runs inside a destination tab. Reconstructing every image in a single
-// DataTransfer is important: repeated one-file changes cause some uploaders to
-// replace the previous selection and retain only the last image.
-async function injectFiles(payloads) {
-  const transfer = new DataTransfer();
-  for (const payload of payloads) {
-    const binary = atob(payload.dataUrl.split(',')[1]);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    transfer.items.add(new File([bytes], payload.name, {
-      type: payload.mimeType,
-      lastModified: payload.lastModified,
-    }));
-  }
-  const composer =
-    document.querySelector('#prompt-textarea') ||
-    document.querySelector('div[contenteditable="true"].ProseMirror') ||
-    document.querySelector('main div[contenteditable="true"]') ||
-    document.querySelector('main textarea');
-  const inputs = [...document.querySelectorAll('input[type="file"]')];
-  const acceptsImages = (candidate) => /image|\*|png|jpe?g|webp/i.test(candidate.accept || '');
-  const input =
-    inputs.find((candidate) => candidate.multiple && acceptsImages(candidate)) ||
-    inputs.find(acceptsImages) ||
-    inputs.find((candidate) => candidate.multiple) ||
-    inputs[0];
-  let delivered = false;
-  let method = '';
-  if (input) {
-    try {
-      const setter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        'files',
-      ).set;
-      setter.call(input, transfer.files);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      delivered = true;
-      method = 'input';
-    } catch (_) {
-      // Fall through to a synthetic drop for composers without a file input.
-    }
-  }
-  if (!delivered) {
-    if (!composer) return { ok: false, count: 0 };
-    composer.dispatchEvent(new DragEvent('drop', {
-      bubbles: true,
-      cancelable: true,
-      dataTransfer: transfer,
-    }));
-    method = 'drop';
-  }
-
-  return { ok: true, count: transfer.files.length, method };
-}
-
-function dataUrlForBlob(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error || new Error('Could not read attachment.'));
-    reader.readAsDataURL(blob);
-  });
-}
-
-async function payloadsForAssets(assets) {
-  return Promise.all(assets.map(async (asset) => ({
-    dataUrl: await dataUrlForBlob(asset.record.blob),
-    name: asset.deliveredName,
-    mimeType: asset.record.mimeType,
-    lastModified: asset.record.createdAt,
-  })));
-}
-
-async function attachAssetsToTab(tab, assets) {
-  if (!tab?.id || !assets.length) return { ok: false };
-  try {
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: injectFiles,
-      args: [await payloadsForAssets(assets)],
-    });
-    const outcome = result?.result;
-    if (!outcome?.ok || outcome.count !== assets.length) {
-      return { ok: false };
-    }
-    return { ok: true };
-  } catch (_) {
-    return { ok: false };
-  }
-}
-
 async function attachAssetsToCurrentTab(assets) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const outcome = await attachAssetsToTab(tab, assets);
+  const outcome = await ACTIONS.attachAssetsToTab(tab, assets);
   if (outcome.ok) {
     note(`Attached ${assets.length} ${assets.length === 1 ? 'image' : 'images'}. You can attach them again after switching chats.`);
   } else {
@@ -927,59 +726,18 @@ async function attachAssetsToCurrentTab(assets) {
 async function sendToChat(kind) {
   const delivery = await composeOrWarn();
   if (!delivery) return;
-  const cfg =
-    kind === 'chatgpt'
-      ? { patterns: ['https://chatgpt.com/*', 'https://chat.openai.com/*'], home: 'https://chatgpt.com/', label: 'ChatGPT' }
-      : { patterns: ['https://claude.ai/*'], home: 'https://claude.ai/new', label: 'Claude' };
-
-  const tabs = await chrome.tabs.query({ url: cfg.patterns });
-  if (!tabs.length) {
-    await chrome.tabs.create({ url: cfg.home });
-    note(`Opened ${cfg.label} — click the button again once it has loaded.`);
-    return;
-  }
-  // Inject first, focus after: once the chat tab is focused the side panel
-  // loses focus and clipboard writes are rejected ("Document is not focused").
-  const tab = tabs.find((t) => t.active) || tabs[0];
-  const attachmentOutcome = delivery.assets.length
-    ? await attachAssetsToTab(tab, delivery.assets)
-    : { ok: true };
-  const failedAssets = delivery.assets.length && !attachmentOutcome.ok ? delivery.assets : [];
-  let inserted = false;
-  try {
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: injectPrompt,
-      args: [delivery.text],
-    });
-    inserted = !!(result && result.result);
-  } catch (e) {
-    inserted = false;
-  }
-  if (inserted) {
-    await chrome.windows.update(tab.windowId, { focused: true });
-    await chrome.tabs.update(tab.id, { active: true });
-    if (failedAssets.length) {
-      handoffEl.open = true;
-      note(`Prompt inserted, but the images still need attaching. Open ${cfg.label}'s attachment menu and click “Attach all” in Dogear.`);
-    } else {
-      note(`Prompt${delivery.assets.length ? ' and images' : ''} inserted into ${cfg.label} — review and send.`);
-    }
-  } else {
+  chrome.storage.local.set({ lastExportTarget: kind });
+  const outcome = await ACTIONS.deliverToChat(kind, delivery);
+  let copied = true;
+  if (outcome.status === 'copy') {
     try {
       await navigator.clipboard.writeText(delivery.text);
-      if (failedAssets.length) handoffEl.open = true;
-      if (failedAssets.length) {
-        note(`Couldn't complete ${cfg.label} handoff — prompt copied; open its attachment menu and use Dogear's “Attach all” button.`);
-      } else if (delivery.assets.length) {
-        note(`Images attached, but the prompt was copied — paste it into ${cfg.label}.`);
-      } else {
-        note(`Couldn't find ${cfg.label}'s input box — prompt copied to the clipboard.`);
-      }
     } catch (e) {
-      note('Couldn\'t insert or copy automatically — use the "Copy prompt" button.');
+      copied = false;
     }
   }
+  if (outcome.imagesFailed && copied) handoffEl.open = true;
+  note(ACTIONS.chatNote(outcome, delivery, copied));
 }
 
 document.getElementById('to-chatgpt').addEventListener('click', () => sendToChat('chatgpt'));
@@ -1013,17 +771,25 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 updatePdfButton();
 
-// Show the actual capture hotkey for this machine (differs per platform, and
-// the user may have rebound or lost it to a conflict).
+// Show the actual hotkeys for this machine (differs per platform, and the
+// user may have rebound or lost them to a conflict).
 async function updateHotkeyHint() {
-  const el = document.getElementById('hotkey');
   const commands = await chrome.commands.getAll();
-  const cmd = commands.find((c) => c.name === 'ask-selection');
-  el.textContent =
-    cmd && cmd.shortcut ? cmd.shortcut : 'no hotkey — set one at chrome://extensions/shortcuts';
+  const shortcut = (name) => commands.find((c) => c.name === name)?.shortcut || '';
+  document.getElementById('hotkey').textContent =
+    shortcut('ask-selection') || 'no hotkey — set one in Settings';
+  const rest = [['export-prompt', 'export'], ['clear-queue', 'clear']]
+    .filter(([name]) => shortcut(name))
+    .map(([name, label]) => `${shortcut(name)} to ${label}`);
+  document.getElementById('more-hotkeys').textContent = rest.length ? ` ${rest.join(', ')}.` : '';
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.appearance) applyAppearance(changes.appearance.newValue);
+  if (area === 'local' && changes.promptLang && globalThis.DOGEAR_PROMPTS[changes.promptLang.newValue]) {
+    promptLang = changes.promptLang.newValue;
+    langSelect.value = promptLang;
+  }
   if (area === 'local' && changes.queue) {
     const sameQuestionOrder =
       queueOrderFingerprint(changes.queue.oldValue) === queueOrderFingerprint(changes.queue.newValue);

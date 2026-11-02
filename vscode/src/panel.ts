@@ -5,7 +5,9 @@ import { QueueStore, QueueItem, UserMessage, assetIdsOf, coalesceParts } from '.
 import { AssetStore } from './assets';
 import { Decorations } from './decorations';
 import { locateAnchor, rangeFromOffsets } from './anchors';
-import { attachToCodex, copyPrompt, DeliveryAsset, sendToSidebar } from './send';
+import { attachToCodex, deliveryAssets } from './send';
+import { QueueActions } from './actions';
+import { appearance, hotkeyHints, promptLang, setPromptLang } from './settings';
 
 export class DogearPanel implements vscode.WebviewViewProvider {
   static readonly viewId = 'dogear.queue';
@@ -22,8 +24,14 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     private store: QueueStore,
     private assets: AssetStore,
     private decorations: Decorations,
+    private actions: QueueActions,
   ) {
-    context.subscriptions.push(store.onDidChange(() => this.pushState()));
+    context.subscriptions.push(
+      store.onDidChange(() => this.pushState()),
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('dogear')) this.pushState();
+      }),
+    );
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -107,8 +115,10 @@ export class DogearPanel implements vscode.WebviewViewProvider {
         type: 'state',
         queue,
         assets: this.assetPreviews(),
-        promptLang: this.context.globalState.get<string>('promptLang'),
-        hotkeyHint: process.platform === 'darwin' ? '⌃⌥Q' : 'Ctrl+Alt+Q',
+        promptLang: promptLang(this.context),
+        appearance: appearance(),
+        hotkeyHint: hotkeyHints().ask,
+        hotkeys: hotkeyHints(),
       });
     }
   }
@@ -127,13 +137,8 @@ export class DogearPanel implements vscode.WebviewViewProvider {
     this.view?.webview.postMessage({ type: 'response', requestId, result, error });
   }
 
-  private deliveryAssets(ids: unknown): DeliveryAsset[] {
-    if (!Array.isArray(ids)) return [];
-    const unique = [...new Set(ids.filter((id): id is string => typeof id === 'string'))];
-    return unique.flatMap((id, index) => {
-      const uri = this.assets.uri(id);
-      return uri ? [{ id, label: `Image I${index + 1}`, uri }] : [];
-    });
+  private assetIds(ids: unknown): string[] {
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
   }
 
   private async storeAsset(msg: any): Promise<void> {
@@ -197,10 +202,10 @@ export class DogearPanel implements vscode.WebviewViewProvider {
         await this.assets.removeUnreferenced(assetIdsOf(this.store.get()));
         break;
       case 'setLang':
-        await this.context.globalState.update('promptLang', msg.lang);
+        await setPromptLang(String(msg.lang));
         break;
       case 'copy':
-        await copyPrompt(msg.prompt, this.deliveryAssets(msg.assetIds));
+        await this.actions.deliver('copy', String(msg.prompt), this.assetIds(msg.assetIds));
         this.note(msg.assetIds?.length
           ? 'Prompt copied with local image paths — attach the files if the destination cannot read them.'
           : 'Prompt copied — paste it into any chat.');
@@ -208,7 +213,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       case 'attachAssets': {
         const requestId = String(msg.requestId || '');
         try {
-          const result = await attachToCodex(this.deliveryAssets(msg.assetIds));
+          const result = await attachToCodex(deliveryAssets(this.assets, this.assetIds(msg.assetIds)));
           this.respond(requestId, result);
         } catch (error) {
           this.respond(
@@ -220,7 +225,9 @@ export class DogearPanel implements vscode.WebviewViewProvider {
         break;
       }
       case 'send':
-        await sendToSidebar(msg.target, msg.prompt, this.deliveryAssets(msg.assetIds));
+        if (msg.target === 'claude' || msg.target === 'codex') {
+          await this.actions.deliver(msg.target, String(msg.prompt), this.assetIds(msg.assetIds));
+        }
         break;
       case 'askTab':
         // Do not await: the command opens this webview's composer, whose submit
@@ -230,20 +237,11 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       case 'captureScreenshot':
         void vscode.commands.executeCommand('dogear.captureScreenshot');
         break;
-      case 'clear': {
-        const n = this.store.get().length;
-        if (!n) break;
-        const ok = await vscode.window.showWarningMessage(
-          `Remove all ${n} ${n > 1 ? 'queries' : 'query'}?`,
-          { modal: true },
-          'Remove all',
-        );
-        if (ok === 'Remove all') {
-          await this.store.set([]);
-          await this.assets.removeUnreferenced([]);
-        }
+      case 'clear':
+        // Undoable from its notification, so no confirmation. Not awaited: the
+        // notification stays open and must not block later panel messages.
+        void this.actions.clearQueue();
         break;
-      }
       case 'openSource':
         await this.openSource(msg.id);
         break;
@@ -303,6 +301,7 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       'composer.js',
       'prompts/index.js',
       ...packs.map((f) => `prompts/${f}`),
+      'compose.js',
       'sidepanel.js',
     ]
       .map((f) => `<script src="${media(...f.split('/'))}"></script>`)
@@ -356,6 +355,9 @@ export class DogearPanel implements vscode.WebviewViewProvider {
       “Dogear: Add query for selection”). Press the hotkey without selected text,
       or use <strong>Capture screenshot</strong> below, to ask about a screen region.
       Use <strong>Ask tab</strong> to ask without selecting any context.
+      <br /><br />
+      <kbd id="export-hotkey">…</kbd> exports the queue and <kbd id="clear-hotkey">…</kbd>
+      clears it (with Undo) from anywhere in VS Code.
       <br /><br />
       Click a card to select it (<kbd>Shift</kbd>/<kbd>⌘</kbd>-click for several), drag to reorder.
     </p>

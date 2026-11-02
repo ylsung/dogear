@@ -116,3 +116,18 @@ globalThis.DOGEAR_THEME = {
     successBg: '#1e2933',
   },
 };
+
+// Both palettes as CSS custom properties on `scope` (':root' or ':host').
+// The user's Appearance setting lands on that element as data-theme="light" |
+// "dark"; without one, the OS preference decides. `extra` is appended to the
+// base rule (e.g. "all: initial;" for a shadow host).
+globalThis.DOGEAR_THEME_CSS = (scope, extra = '') => {
+  const T = globalThis.DOGEAR_THEME;
+  const vars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
+  const attr = (value) => (scope === ':host' ? `:host([data-theme="${value}"])` : `${scope}[data-theme="${value}"]`);
+  const notLight = scope === ':host' ? ':host(:not([data-theme="light"]))' : `${scope}:not([data-theme="light"])`;
+  const dark = `${vars(T.colorsDark)} color-scheme: dark;`;
+  return `${scope} { ${extra} ${vars(T.colors)} color-scheme: light; }\n` +
+    `@media (prefers-color-scheme: dark) { ${notLight} { ${dark} } }\n` +
+    `${attr('dark')} { ${dark} }`;
+};

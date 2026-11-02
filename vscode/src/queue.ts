@@ -123,6 +123,38 @@ export class QueueStore {
     this.emitter.fire(queue);
   }
 
+  // Clear keeps the removed questions in memory (and so their images on disk,
+  // via clearedAssetIds) for an undo window instead of asking for confirmation.
+  private cleared: { items: QueueItem[]; at: number } | undefined;
+  static readonly clearUndoMs = 5 * 60 * 1000;
+
+  async clear(): Promise<number> {
+    const queue = this.get();
+    if (!queue.length) return 0;
+    this.cleared = { items: queue, at: Date.now() };
+    await this.set([]);
+    return queue.length;
+  }
+
+  /** Restores the last clear ahead of anything added since; returns the count. */
+  async undoClear(): Promise<number> {
+    const cleared = this.cleared;
+    if (!cleared || Date.now() - cleared.at >= QueueStore.clearUndoMs) return 0;
+    this.cleared = undefined;
+    const ids = new Set(cleared.items.map((item) => item.id));
+    await this.set([...cleared.items, ...this.get().filter((item) => !ids.has(item.id))]);
+    return cleared.items.length;
+  }
+
+  clearedAssetIds(): string[] {
+    if (!this.cleared) return [];
+    if (Date.now() - this.cleared.at >= QueueStore.clearUndoMs) {
+      this.cleared = undefined;
+      return [];
+    }
+    return assetIdsOf(this.cleared.items);
+  }
+
   // Grouped insertion, same rule as the Chrome extension: a new item lands
   // right after the last existing item from the same document.
   async add(item: QueueItem): Promise<void> {

@@ -43,20 +43,56 @@
       {
         "command": "dogear.askMarkdownPreviewSelection",
         "title": "Dogear: Add selected preview text"
+      },
+      {
+        "command": "dogear.exportPrompt",
+        "title": "Dogear: Export prompt…"
+      },
+      {
+        "command": "dogear.clearQueue",
+        "title": "Dogear: Clear queue"
+      },
+      {
+        "command": "dogear.undoClear",
+        "title": "Dogear: Undo clear queue"
+      },
+      {
+        "command": "dogear.openQueue",
+        "title": "Dogear: Open queue"
+      },
+      {
+        "command": "dogear.openSettings",
+        "title": "Dogear: Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "dogear.openShortcuts",
+        "title": "Dogear: Keyboard shortcuts",
+        "icon": "$(keyboard)"
       }
     ],
     "keybindings": [
       {
         "command": "dogear.askSelection",
-        "key": "ctrl+alt+q",
-        "mac": "ctrl+alt+q",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
         "when": "editorTextFocus"
       },
       {
         "command": "dogear.askMarkdownPreviewSelection",
-        "key": "ctrl+alt+q",
-        "mac": "ctrl+alt+q",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
         "when": "activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor'"
+      },
+      {
+        "command": "dogear.exportPrompt",
+        "key": "ctrl+shift+x",
+        "mac": "cmd+shift+x"
+      },
+      {
+        "command": "dogear.clearQueue",
+        "key": "ctrl+shift+0",
+        "mac": "cmd+shift+0"
       }
     ],
     "menus": {
@@ -97,6 +133,18 @@
           "when": "webviewId == 'markdown.preview' || webviewId == 'vscode.markdown.preview.editor'",
           "group": "dogear"
         }
+      ],
+      "view/title": [
+        {
+          "command": "dogear.openShortcuts",
+          "when": "view == dogear.queue",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dogear.openSettings",
+          "when": "view == dogear.queue",
+          "group": "navigation@2"
+        }
       ]
     },
     "viewsContainers": {
@@ -117,6 +165,39 @@
           "icon": "media/dogear.svg"
         }
       ]
+    },
+    "configuration": {
+      "title": "Dogear",
+      "properties": {
+        "dogear.appearance": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "enumDescriptions": [
+            "Follow the VS Code color theme.",
+            "Always use the light palette.",
+            "Always use the dark palette."
+          ],
+          "default": "auto",
+          "markdownDescription": "Light or dark palette for the Dogear sidebar. Keyboard shortcuts are changed in [Keyboard Shortcuts](command:dogear.openShortcuts)."
+        },
+        "dogear.promptLanguage": {
+          "type": "string",
+          "enum": [
+            "en",
+            "zh-TW"
+          ],
+          "enumDescriptions": [
+            "English",
+            "繁體中文 (Traditional Chinese)"
+          ],
+          "default": "en",
+          "description": "Language of the composed prompt sent to the AI (not the sidebar interface)."
+        }
+      }
     }
   },
   "scripts": {

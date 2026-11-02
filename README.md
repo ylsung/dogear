@@ -40,6 +40,22 @@ usage, permissions, build instructions, and current limitations. The published
 [SHA-256 checksum](desktop/releases/Dogear-0.1.1-macOS-arm64-SHA256.txt) can be
 used to verify the download.
 
+## Keyboard shortcuts
+
+Every Dogear uses the same defaults, so one set of keys works in Chrome, VS Code,
+and the macOS app:
+
+| Action | Mac | Windows / Linux |
+|---|---|---|
+| Ask about the selection (no selection: screenshot) | `⌘⇧E` | `Ctrl+Shift+E` |
+| Export the queue (pick a destination) | `⌘⇧X` | `Ctrl+Shift+X` |
+| Clear the queue (undoable) | `⌘⇧0` | `Ctrl+Shift+0` |
+
+Each app has a settings page to change them: Chrome's **Settings** (⚙ in the
+side panel), VS Code's Keyboard Shortcuts (⌨ in the Dogear view title), and the
+desktop app's **Settings…** (`⌘,`). While Chrome or VS Code is in front, the
+desktop app pauses its shortcuts so the extension receives them.
+
 ## Install (developer mode)
 
 1. Open `chrome://extensions`
@@ -48,10 +64,12 @@ used to verify the download.
 
 ## Usage
 
-1. On any page, select text → press the hotkey (`Alt+Q` on Windows/Linux,
-   `⌃Q` on Mac) or right-click → *Dogear: ask about selection*. Chrome only
-   applies suggested hotkeys at install time; check or rebind at
-   `chrome://extensions/shortcuts`. The side panel shows your actual binding.
+1. On any page, select text → press `⌘⇧E` (Mac) / `Ctrl+Shift+E`
+   (Windows/Linux) or right-click → **Dogear → Ask about selection**. Chrome
+   only applies suggested shortcuts at install time; check or rebind them from
+   Dogear's **Settings** (⚙ in the side panel), which links to
+   `chrome://extensions/shortcuts`. If you installed an earlier version, your
+   old `⌃Q` / `Alt+Q` binding stays until you change it there.
    Press the hotkey without selected text to capture part or all of the visible
    page as image context. You can also use **Capture screenshot** in the side panel,
    or choose **Ask page** to start a question without selected context.
@@ -70,6 +88,16 @@ used to verify the download.
      this tab**, or use the individual **Attach** and **Save** controls.
      The controls remain neutral and reusable after each attempt, so you can
      switch chats and attach the same image set again.
+   - Without opening the side panel: press `⌘⇧X` / `Ctrl+Shift+X` for an export
+     popup on the page. Press `1`–`3` to pick a destination, `Enter` for the last
+     one used, or `⌘⇧X` again to repeat it.
+6. Press `⌘⇧0` / `Ctrl+Shift+0` (or side panel **Clear**) to empty the queue.
+   There is no confirmation: the page toast offers **Undo**, and `Command/Ctrl+Z`
+   in the side panel restores it, for five minutes.
+
+The right-click **Dogear** menu also offers asking about the page, screenshot
+capture, opening the queue, export, clear, and Settings. **Settings** holds the
+shortcuts, Light / Dark / Match system appearance, and the prompt language.
 
 Images are kept in extension-local storage while you collect and edit questions.
 Dogear only hands them to a website when you choose a delivery or attachment
@@ -97,7 +125,7 @@ toolbar button to pick the file.
 The same select-and-queue workflow, inside your editor, sending batches to
 **Claude Code** or **Codex** instead of a browser chat tab.
 
-1. Select code or text in any editor → press `⌃⌥Q` (Mac) / `Ctrl+Alt+Q`
+1. Select code or text in any editor → press `⌘⇧E` (Mac) / `Ctrl+Shift+E`
    (Windows/Linux), or right-click → **Dogear: Add query for selection**. You
    can also right-click an image file → **Dogear: Add query for image**. On a
    local Mac, press the hotkey without selected text to capture a screen region
@@ -118,6 +146,8 @@ The same select-and-queue workflow, inside your editor, sending batches to
    - A folded **Manual handoff** tray appears whenever queued images are present
      and stays available for **Copy prompt**, **→ Claude Code**, and **→ Codex**,
      with **Attach all images to this chat**. Dogear never sends on your behalf.
+   - `⌘⇧X` / `Ctrl+Shift+X` exports from anywhere in VS Code through a quick
+     pick, and `⌘⇧0` / `Ctrl+Shift+0` clears the queue with an **Undo** button.
 
 It also supports capturing selections from VS Code's Markdown preview and from
 the Codex/Claude Code chat webviews via right-click, though those captures are
