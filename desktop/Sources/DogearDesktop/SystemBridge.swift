@@ -21,6 +21,7 @@ final class SystemBridge {
         .codex: ["com.openai.codex", "com.openai.chat", "com.openai.chatgpt"],
         .terminal: [],
     ]
+    private let clipboard = ClipboardWatch()
 
     func frontmostContext() -> FrontmostContext {
         context(for: NSWorkspace.shared.frontmostApplication)
@@ -44,6 +45,10 @@ final class SystemBridge {
         }
         // An empty Accessibility answer is not proof: Terminal reports its
         // cursor, not the mouse highlight, so copy and see what arrives.
+        let recent = clipboard.recentCopy(from: context.application?.bundleIdentifier, within: 10)
+        let recentText = recent.flatMap { _ in
+            NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let snapshot = PasteboardSnapshot.capture()
         NSPasteboard.general.clearContents()
         let cleared = NSPasteboard.general.changeCount
@@ -52,8 +57,19 @@ final class SystemBridge {
             let copied = pasteboard.changeCount == cleared ? nil
                 : pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
             snapshot.restore()
+            self.clipboard.ownWrite(keeping: recent)
             captureLog.notice("\(app, privacy: .public): \(how, privacy: .public) copied \(copied?.count ?? 0) chars")
-            completion(copied?.isEmpty == false ? copied : nil)
+            if copied?.isEmpty == false { completion(copied); return }
+            // Full-screen terminal UIs (Claude Code, Codex, tmux with a
+            // pbcopy binding) draw their own highlight and copy it on mouse-up,
+            // so the terminal has nothing selected. A copy made in this app
+            // moments ago stands in for the selection.
+            if let recent, let recentText, !recentText.isEmpty {
+                captureLog.notice("\(app, privacy: .public): using its copy from \(Int(-recent.at.timeIntervalSinceNow))s ago (\(recentText.count) chars)")
+                completion(recentText)
+                return
+            }
+            completion(nil)
         }
         // Pressing Edit → Copy through Accessibility runs the app's copy
         // without a keystroke: no beep when nothing is selected. Its enabled
@@ -154,6 +170,7 @@ final class SystemBridge {
                 ?? self.runningApplication(namedFor: plan.target) else {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(planFallback(plan), forType: .string)
+            clipboard.ownWrite()
             completion(false)
             return
         }
@@ -186,6 +203,7 @@ final class SystemBridge {
             item.setString(url.absoluteString, forType: .fileURL)
             NSPasteboard.general.writeObjects([item])
         }
+        clipboard.ownWrite()
         sendCommandKey(9) // V. Never synthesize Enter.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
             self.paste(chunks, index: index + 1, completion: completion)
@@ -262,5 +280,49 @@ private struct PasteboardSnapshot {
             return item
         }
         NSPasteboard.general.writeObjects(restored)
+    }
+}
+
+/// The last clipboard change another app made, and which app was in front
+/// then. NSPasteboard posts no notifications, so the change count is polled.
+@MainActor
+private final class ClipboardWatch {
+    struct Copy {
+        var count: Int
+        var at: Date
+        var bundle: String?
+    }
+
+    private var seen = NSPasteboard.general.changeCount
+    private var last: Copy?
+    private var timer: Timer?
+
+    init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+    }
+
+    private func poll() {
+        let count = NSPasteboard.general.changeCount
+        guard count != seen else { return }
+        seen = count
+        last = Copy(count: count, at: Date(), bundle: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+    }
+
+    /// The clipboard's current contents, if `bundle` copied them within
+    /// `seconds`.
+    func recentCopy(from bundle: String?, within seconds: TimeInterval) -> Copy? {
+        poll()
+        guard let last, last.count == seen, last.bundle == bundle,
+              -last.at.timeIntervalSinceNow <= seconds else { return nil }
+        return last
+    }
+
+    /// Dogear's own writes are not copies. Restoring a snapshot puts `copy`
+    /// back as the latest one.
+    func ownWrite(keeping copy: Copy? = nil) {
+        seen = NSPasteboard.general.changeCount
+        last = copy.map { Copy(count: seen, at: $0.at, bundle: $0.bundle) }
     }
 }
