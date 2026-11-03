@@ -1,0 +1,12 @@
+{
+  "name": "dogear-compatibility-tests",
+  "private": true,
+  "scripts": {
+    "test": "node ../../extension/tests/model.test.js && node ../../extension/tests/simulator/keyboard.js && node ../../vscode/tests/simulator/run.js",
+    "test:handoff": "node ../../extension/tests/simulator/run.js"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "chrome-remote-interface": "0.33.3"
+  }
+}

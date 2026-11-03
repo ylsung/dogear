@@ -2,6 +2,29 @@ import DogearCore
 import XCTest
 
 final class DesktopSimulationTests: XCTestCase {
+    func testApplicationCompatibilityDeliveryMatrix() {
+        // Exercise production composition and delivery simulation, including
+        // generic sources whose apps do not have a dedicated surface enum.
+        for app in ["Codex", "Claude", "Grok", "Gemini", "Antigravity", "Terminal"] {
+            let image = ImageAsset(path: "/tmp/context.png", label: "context.png")
+            let item = QueueItem(
+                source: Source(applicationName: app, windowTitle: "Compatibility fixture"),
+                selectedContext: [.text("Selected text from \(app)"), .image(image)],
+                message: [.text("Explain this.\nKeep the context.")]
+            )
+            for target in DeliveryTarget.allCases {
+                let plan = PromptComposer.plan(for: [item], target: target)
+                let events = DeliverySimulator().run(plan)
+                XCTAssertEqual(events.first, .activate(target, nil))
+                XCTAssertTrue(events.contains(.pasteImage(image)))
+                let prompt = PromptComposer.text(for: [item])
+                XCTAssertTrue(prompt.contains("Selected text from \(app)"))
+                XCTAssertTrue(prompt.contains("Explain this.\nKeep the context."))
+                XCTAssertFalse(prompt.contains("\r"))
+            }
+        }
+    }
+
     func testInlineImageMarkersControlDeliveryOrder() {
         let first = ImageAsset(path: "/tmp/a.png", label: "a.png")
         let second = ImageAsset(path: "/tmp/b.png", label: "b.png")

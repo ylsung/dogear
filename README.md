@@ -152,3 +152,9 @@ including multimodal delivery behavior and fallbacks, are in
 ## License
 
 [MIT](LICENSE)
+
+## Compatibility testing
+
+[Compatibility checks](tests/compatibility/README.md) document the web, VS Code,
+and desktop simulations and their limits. GitHub Actions runs them on pull
+requests and weekly, including the ChatGPT keyboard-focus regression.

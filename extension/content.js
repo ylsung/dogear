@@ -214,6 +214,8 @@
   // Closed: page scripts must not get a handle on our UI (they could read the
   // typed question or synthesize clicks that plant items in the queue).
   const shadow = host.attachShadow({ mode: 'closed' });
+  globalThis.DOGEAR_KEYBOARD_TARGET = (event) =>
+    event.composedPath().includes(host) ? shadow.activeElement : null;
   // Styles go through adoptedStyleSheets: pages with a strict style-src CSP
   // (e.g. the bundled PDF.js viewer, some hardened sites) block <style>
   // elements, but constructed stylesheets are not subject to page CSP.
@@ -410,8 +412,76 @@
   const captureFullBtn = shadow.querySelector('.capture-full');
   const toastEl = shadow.querySelector('.toast');
 
+  let focusOwner = null;
+  let focusSelection = null;
+  let focusRequest = 0;
+  const captureVisible = () => popover.style.display === 'block' || captureOverlay.style.display === 'block';
+  function releaseFocus() {
+    focusOwner = null;
+    focusSelection = null;
+    focusRequest += 1;
+  }
+  globalThis.DOGEAR_RELEASE_FOCUS = releaseFocus;
+  globalThis.DOGEAR_REMEMBER_FOCUS_SELECTION = (event) => {
+    if (!focusOwner || !event.composedPath().includes(host)) return;
+    const selection = shadow.getSelection?.() || window.getSelection();
+    if (selection?.rangeCount) {
+      const range = selection.getRangeAt(0);
+      if (focusOwner.contains(range.commonAncestorContainer)) focusSelection = range.cloneRange();
+    }
+  };
+  globalThis.DOGEAR_POINTER_INTENT = (event) => {
+    if (!event.composedPath().includes(host)) releaseFocus();
+  };
+  globalThis.DOGEAR_FOCUS_EVENT = (event) => {
+    if (!captureVisible()) return false;
+    const focusing = event.type === 'focus' || event.type === 'focusin';
+    if (event.composedPath().includes(host)) {
+      if (focusing) {
+        if (focusOwner !== shadow.activeElement) focusSelection = null;
+        focusOwner = shadow.activeElement;
+      }
+      // The page sees only the non-editable shadow host. Its focus handlers
+      // must not treat our editor as an outside/non-editable focus target.
+      return true;
+    }
+    if (!focusing || !focusOwner || !host.isConnected) return false;
+    // Keep the user's chosen editor/control when a page script calls focus().
+    // Outside pointerdown, Tab, dismissal, and window blur release it first.
+    const owner = focusOwner;
+    owner.focus({ preventScroll: true });
+    if (shadow.activeElement !== owner) releaseFocus();
+    else if (focusSelection && owner.contains(focusSelection.commonAncestorContainer)) {
+      const selection = shadow.getSelection?.() || window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(focusSelection);
+    }
+    return true;
+  };
+  function resetAndFocusQuestion() {
+    const request = ++focusRequest;
+    composer.setParts([]).then(() => {
+      if (request === focusRequest && popover.style.display === 'block') composer.focus();
+    });
+  }
+
   function attachHost() {
-    if (document.body && !host.isConnected) document.body.appendChild(host);
+    // Image lightboxes commonly trap focus inside their dialog and make the
+    // rest of the document inert. A body-level editor cannot receive focus
+    // there, regardless of how we isolate its keyboard events. Keep our closed
+    // shadow root inside the active modal's focus scope (and native top layer).
+    const visible = (el) => !el.closest('[inert], [hidden], [aria-hidden="true"]') &&
+      el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    const dialogs = [...document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"]')]
+      .filter(visible);
+    const parent = [...document.querySelectorAll('dialog:modal')].at(-1) ||
+      dialogs.filter((el) => el.getAttribute('aria-modal') === 'true').at(-1) ||
+      dialogs.at(-1) || document.body;
+    if (parent && host.parentNode !== parent) parent.appendChild(host);
+    // Modal libraries can mark each body child inert/aria-hidden when opening.
+    // Clear those attributes on our own host after moving it into the dialog.
+    host.removeAttribute('inert');
+    host.removeAttribute('aria-hidden');
   }
 
   let savedCapture = null;
@@ -537,7 +607,7 @@
     excerptEl.textContent = text.length > 200 ? `${text.slice(0, 200)}…` : text;
     positionNear(popover, captureRect(cap));
     popover.style.display = 'block';
-    composer.setParts([]).then(() => composer.focus());
+    resetAndFocusQuestion();
   }
 
   function openPagePopover() {
@@ -548,10 +618,11 @@
     excerptEl.textContent = 'Asking about this page — no selection';
     positionNear(popover, { bottom: 18, left: Math.max(18, window.innerWidth - 380) });
     popover.style.display = 'block';
-    composer.setParts([]).then(() => composer.focus());
+    resetAndFocusQuestion();
   }
 
   function closePopover() {
+    releaseFocus();
     popover.style.display = 'none';
     savedCapture = null;
     pendingCapture = null;
@@ -572,12 +643,14 @@
   }
 
   function stopRegionCapture() {
+    releaseFocus();
     captureOverlay.style.display = 'none';
     captureBox.style.display = 'none';
   }
 
   async function finishRegionCapture(rect) {
     stopRegionCapture();
+    const request = focusRequest;
     // Let Chrome paint away Dogear's overlay before capturing the tab.
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     try {
@@ -587,6 +660,7 @@
         viewport: { width: window.innerWidth, height: window.innerHeight },
       });
       if (!response?.ok) throw new Error(response?.error || 'Could not capture screenshot.');
+      if (request !== focusRequest) return;
       savedCapture = {
         kind: 'image',
         asset: response.asset,
@@ -607,7 +681,7 @@
       excerptEl.replaceChildren(img);
       positionNear(popover, { bottom: Math.min(rect.y + rect.height, innerHeight - 180), left: rect.x });
       popover.style.display = 'block';
-      composer.setParts([]).then(() => composer.focus());
+      resetAndFocusQuestion();
     } catch (error) {
       toast(error.message || 'Could not capture screenshot.');
     }
@@ -644,7 +718,10 @@
     else finishRegionCapture(rect);
   });
   captureOverlay.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') stopRegionCapture();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      stopRegionCapture();
+    }
   });
   captureFullBtn.addEventListener('click', () => finishRegionCapture({
     x: 0,
@@ -763,15 +840,18 @@
   });
   questionEl.addEventListener('keydown', (e) => {
     e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       saveQuestion();
     } else if (e.key === 'Escape') {
+      e.preventDefault();
       closePopover();
     }
   });
   // keyup/keypress/input also cross the shadow boundary (composed events);
-  // stop them so page scripts can't keylog the question as it's typed.
+  // stop bubbling into host-page handlers. The early keyboard boundary also
+  // blocks capture-phase keyboard shortcuts; this is not a page security boundary.
   for (const type of ['keyup', 'keypress', 'input', 'paste', 'drop']) {
     questionEl.addEventListener(type, (e) => e.stopPropagation());
   }

@@ -262,6 +262,22 @@ async function main() {
       'stable',
     );
 
+    // Source webviews share the same Dogear composer/queue bridge. These are
+    // bridge fixtures, not assertions about another extension's private DOM.
+    for (const surface of ['codex-chat', 'claude-chat', 'gemini-chat', 'antigravity-chat', 'markdown-preview']) {
+      const item = { ...initialItem(), id: surface, title: surface,
+        url: `dogear-webview://${surface}/conversation`, surface,
+        selectedContext: [{ type: 'text', text: `Selected text from ${surface}` }] };
+      await page.evaluate(queue => window.dispatchEvent(new MessageEvent('message', {
+        data: { type: 'state', queue, assets: {}, promptLang: 'en', hotkeyHint: 'Ctrl+Alt+Q' },
+      })), [item]);
+      await page.locator(`.card[data-id="${surface}"]`).waitFor();
+      await page.locator('#copy').click();
+      const prompt = await page.evaluate(() => window.__hostMessages.findLast(message => message.type === 'copy').prompt);
+      assert.ok(prompt.includes(`Selected text from ${surface}`));
+      assert.ok(prompt.includes('Explain this.'));
+      console.log(`PASS: VS Code ${surface}: queue rendering and prompt bridge`);
+    }
     console.log('PASS: multiline text, three images, stable queue echoes, image context, prompt labels, and manual handoff');
   } finally {
     await browser.close();
