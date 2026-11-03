@@ -44,5 +44,10 @@ plutil -lint "$app_root/Contents/Info.plist" >/dev/null
 test -x "$app_root/Contents/MacOS/DogearDesktop"
 
 bash "$desktop_root/sign-app.sh" "$app_root"
+# Rebuilding replaces files inside an existing bundle without changing the
+# bundle directory's date, so Finder and the Dock keep a cached (often blank)
+# icon. Bump the date and re-register so the new icon is picked up.
+touch "$app_root"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app_root"
 
 echo "Built $app_root"
