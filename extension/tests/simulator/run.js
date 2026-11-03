@@ -334,7 +334,10 @@ async function main() {
       targetChip.dispatchEvent(new DragEvent('dragover', dragOnImage));
       await new Promise(requestAnimationFrame);
       const imageCaret = document.querySelector('.dogear-inline-drop-caret');
-      const caretBesideTarget = imageCaret?.style.left === String(targetRect.left) + 'px';
+      // Chromium serializes inline lengths to 6 significant digits, so compare
+      // numerically rather than against the full-precision rect string.
+      const caretBesideTarget = !!imageCaret &&
+        Math.abs(parseFloat(imageCaret.style.left) - targetRect.left) < 0.01;
       targetChip.dispatchEvent(new DragEvent('drop', dragOnImage));
       await new Promise((resolve) => setTimeout(resolve, 300));
       queue = await getQueue();
@@ -436,6 +439,12 @@ async function main() {
           key: 'z', code: 'KeyZ', metaKey: true, bubbles: true, cancelable: true,
         }));
         await new Promise((resolve) => setTimeout(resolve, 180));
+      }
+      // Each undo re-renders chips after async preview lookups, so give the
+      // queued history a moment to settle instead of sampling once.
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        if (editor.querySelectorAll('.dogear-asset-chip').length === 3) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
       return {
         everyRemovalWorkedFirstClick: JSON.stringify(counts) === JSON.stringify([2, 1, 0]),
