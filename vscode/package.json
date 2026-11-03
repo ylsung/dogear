@@ -69,6 +69,11 @@
         "command": "dogear.openShortcuts",
         "title": "Dogear: Keyboard shortcuts",
         "icon": "$(keyboard)"
+      },
+      {
+        "command": "dogear.sendFeedback",
+        "title": "Dogear: Send feedback",
+        "icon": "$(feedback)"
       }
     ],
     "keybindings": [
@@ -144,6 +149,11 @@
           "command": "dogear.openSettings",
           "when": "view == dogear.queue",
           "group": "navigation@2"
+        },
+        {
+          "command": "dogear.sendFeedback",
+          "when": "view == dogear.queue",
+          "group": "navigation@3"
         }
       ]
     },

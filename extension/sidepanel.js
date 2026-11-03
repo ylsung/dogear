@@ -687,6 +687,7 @@ document.getElementById('clear').addEventListener('click', async () => {
 });
 
 document.getElementById('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
+document.getElementById('feedback').addEventListener('click', () => ACTIONS.openFeedback());
 
 document.getElementById('capture-region').addEventListener('click', async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

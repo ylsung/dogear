@@ -59,6 +59,8 @@ async function buildContextMenu() {
     targetUrlPatterns: ['*://*/*.pdf*', '*://*/pdf/*'],
   });
   add({ id: 'dogear-settings', title: 'Settings…', contexts: PAGE_CONTEXTS });
+  // The toolbar icon's own right-click menu.
+  chrome.contextMenus.create({ id: 'dogear-feedback', title: 'Send feedback', contexts: ['action'] });
 }
 
 // Serialize rebuilds: removeAll/create from two overlapping calls would
@@ -158,6 +160,9 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
       break;
     case 'dogear-settings':
       chrome.runtime.openOptionsPage();
+      break;
+    case 'dogear-feedback':
+      ACTIONS.openFeedback();
       break;
   }
 });

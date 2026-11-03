@@ -23,6 +23,14 @@
     claude: { patterns: ['https://claude.ai/*'], home: 'https://claude.ai/new', label: 'Claude' },
   };
 
+  // The feedback form, with its Platform question prefilled.
+  const FEEDBACK_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSdlqToT9hgAQiGizo-yyDEgoAse1_jptcYpOOjzHyVRojQ7tA/viewform'
+    + '?usp=pp_url&entry.28375611=Chrome+Extension';
+
+  function openFeedback() {
+    return chrome.tabs.create({ url: FEEDBACK_URL });
+  }
+
   async function getQueue() {
     const { queue = [] } = await chrome.storage.local.get('queue');
     return queue.map(M.normalizeItem);
@@ -375,5 +383,6 @@
     canUndoClear,
     undoClear,
     clearedAssetIds,
+    openFeedback,
   };
 })();
