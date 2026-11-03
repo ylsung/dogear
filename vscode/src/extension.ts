@@ -14,6 +14,10 @@ import { QueueActions } from './actions';
 import { deliveryAssets } from './send';
 import { migrateSettings } from './settings';
 
+// The feedback form, with its Platform question prefilled.
+const FEEDBACK_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSdlqToT9hgAQiGizo-yyDEgoAse1_jptcYpOOjzHyVRojQ7tA/viewform'
+  + '?usp=pp_url&entry.28375611=VSCode+Extension';
+
 export function activate(context: vscode.ExtensionContext): void {
   void migrateSettings(context);
   const store = new QueueStore(context.workspaceState);
@@ -55,6 +59,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand('dogear.openShortcuts', () =>
       vscode.commands.executeCommand('workbench.action.openGlobalKeybindings', 'dogear.'),
+    ),
+    vscode.commands.registerCommand('dogear.sendFeedback', () =>
+      vscode.env.openExternal(vscode.Uri.parse(FEEDBACK_URL)),
     ),
   );
 }

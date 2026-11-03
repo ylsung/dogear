@@ -11,6 +11,7 @@ struct ContentView: View {
     let clearQueue: () -> Void
     let undoClear: () -> Void
     let openSettings: () -> Void
+    let sendFeedback: () -> Void
     let routingChanged: () -> Void
     let openAccessibilitySettings: () -> Void
     let refreshAccessibility: () -> Void
@@ -123,6 +124,10 @@ struct ContentView: View {
             refreshScreenRecording()
         }
         .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button(action: sendFeedback) { Image(systemName: "bubble.left") }
+                    .help("Send feedback")
+            }
             ToolbarItem(placement: .automatic) {
                 Button(action: openSettings) { Image(systemName: "gearshape") }
                     .help("Settings: shortcuts, appearance, extension routing")

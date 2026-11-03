@@ -34,6 +34,7 @@ struct DogearDesktopApp: App {
                 clearQueue: delegate.clearQueue,
                 undoClear: delegate.undoClear,
                 openSettings: delegate.openSettings,
+                sendFeedback: delegate.sendFeedback,
                 routingChanged: delegate.updateHotKeyRouting,
                 openAccessibilitySettings: delegate.openAccessibilitySettings,
                 refreshAccessibility: delegate.refreshAccessibility,
@@ -49,6 +50,9 @@ struct DogearDesktopApp: App {
         .commands {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…", action: delegate.openSettings).keyboardShortcut(",")
+            }
+            CommandGroup(replacing: .help) {
+                Button("Send feedback…", action: delegate.sendFeedback)
             }
         }
 
@@ -93,6 +97,7 @@ private struct MenuBarContent: View {
         Button("Enable Screen Recording…", action: delegate.requestScreenRecording)
         Button("Show queue", action: delegate.showWindow)
         Button("Settings…", action: delegate.openSettings)
+        Button("Send feedback…", action: delegate.sendFeedback)
         Button("Quit Dogear") { NSApp.terminate(nil) }
     }
 }
@@ -359,6 +364,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Opens the feedback form with its Platform question prefilled.
+    func sendFeedback() {
+        NSWorkspace.shared.open(URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSdlqToT9hgAQiGizo-yyDEgoAse1_jptcYpOOjzHyVRojQ7tA/viewform?usp=pp_url&entry.28375611=Desktop+(MacOS)")!)
     }
 
     private func makeExportPanel() -> NSPanel {
