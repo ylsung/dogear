@@ -235,17 +235,17 @@ private struct ToastView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(message).foregroundStyle(Color.white)
+            Text(message).foregroundStyle(DogearTheme.textOnDark)
             if let actionTitle, let action {
                 Button(actionTitle, action: action)
                     .buttonStyle(.bordered)
-                    .tint(.white)
+                    .tint(DogearTheme.textOnDark)
             }
         }
         .font(DogearTypography.callout)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(RoundedRectangle(cornerRadius: 9).fill(Color(red: 0x2b / 255, green: 0x2e / 255, blue: 0x5c / 255)))
+        .background(RoundedRectangle(cornerRadius: 9).fill(DogearTheme.dark))
         .fixedSize()
     }
 }

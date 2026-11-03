@@ -243,7 +243,6 @@ kbd {
   background-color: var(--panel);
   color: var(--text);
   -webkit-text-fill-color: var(--text);
-  color-scheme: light;
   appearance: none;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

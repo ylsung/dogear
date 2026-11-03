@@ -15,6 +15,8 @@ enum DogearTheme {
     static let nsGroupBg = dynamic(0xebecf7, 0x3c3e51)
     static let nsBorder = dynamic(0xd4d5dc, 0x2e303f)
     static let nsDanger = dynamic(0xd4474f, 0xd4474f)
+    static let nsDark = dynamic(0x2b2e5c, 0x2b2e5c)
+    static let nsTextOnDark = dynamic(0xf5f5fa, 0xf5f5fa)
 
     static let primary = Color(nsColor: nsPrimary)
     static let textOnPrimary = Color(nsColor: nsTextOnPrimary)
@@ -25,6 +27,8 @@ enum DogearTheme {
     static let groupBg = Color(nsColor: nsGroupBg)
     static let border = Color(nsColor: nsBorder)
     static let danger = Color(nsColor: nsDanger)
+    static let dark = Color(nsColor: nsDark)
+    static let textOnDark = Color(nsColor: nsTextOnDark)
 
     private static func dynamic(_ light: UInt32, _ dark: UInt32) -> NSColor {
         NSColor(name: nil) { appearance in
