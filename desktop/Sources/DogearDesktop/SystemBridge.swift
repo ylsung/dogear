@@ -43,25 +43,35 @@ final class SystemBridge {
             return
         }
         // An empty Accessibility answer is not proof: Terminal reports its
-        // cursor, not the mouse highlight. A disabled Copy menu item is, and
-        // skipping ⌘C then avoids the beep apps make at a disabled Copy.
-        let copy = copyMenuState(in: context.application)
-        if copy == .disabled {
-            captureLog.notice("\(app, privacy: .public): Copy is disabled, so no selection")
-            completion(nil)
-            return
-        }
+        // cursor, not the mouse highlight, so copy and see what arrives.
         let snapshot = PasteboardSnapshot.capture()
         NSPasteboard.general.clearContents()
+        let cleared = NSPasteboard.general.changeCount
+        let finish = { (how: String) in
+            let pasteboard = NSPasteboard.general
+            let copied = pasteboard.changeCount == cleared ? nil
+                : pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            snapshot.restore()
+            captureLog.notice("\(app, privacy: .public): \(how, privacy: .public) copied \(copied?.count ?? 0) chars")
+            completion(copied?.isEmpty == false ? copied : nil)
+        }
+        // Pressing Edit → Copy through Accessibility runs the app's copy
+        // without a keystroke: no beep when nothing is selected. Its enabled
+        // state is not checked first, since apps refresh it only when the
+        // menu opens and Terminal's is usually stale.
+        if let item = copyMenuItem(in: context.application) {
+            let listedEnabled = attribute(item, kAXEnabledAttribute) as? Bool
+            if AXUIElementPerformAction(item, kAXPressAction as CFString) == .success {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    finish("Edit → Copy (listed \(listedEnabled.map { $0 ? "enabled" : "disabled" } ?? "unknown"))")
+                }
+                return
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             self.whenModifiersReleased {
                 self.sendCommandKey(8) // C
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                    let selected = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    snapshot.restore()
-                    captureLog.notice("\(app, privacy: .public): Copy is \(String(describing: copy), privacy: .public); ⌘C copied \(selected?.count ?? 0) chars")
-                    completion(selected?.isEmpty == false ? selected : nil)
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { finish("⌘C") }
             }
         }
     }
@@ -77,26 +87,21 @@ final class SystemBridge {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private enum CopyState { case enabled, disabled, unknown }
-
-    /// Whether the app's ⌘C menu item (Edit → Copy) is enabled. Apps enable
-    /// it only when something is selected.
-    private func copyMenuState(in application: NSRunningApplication?) -> CopyState {
+    /// The app's ⌘C menu item (normally Edit → Copy).
+    private func copyMenuItem(in application: NSRunningApplication?) -> AXUIElement? {
         guard let pid = application?.processIdentifier,
               let menuBar = attribute(AXUIElementCreateApplication(pid), kAXMenuBarAttribute),
-              CFGetTypeID(menuBar) == AXUIElementGetTypeID() else { return .unknown }
+              CFGetTypeID(menuBar) == AXUIElementGetTypeID() else { return nil }
         for menuBarItem in children(of: menuBar as! AXUIElement) {
             for menu in children(of: menuBarItem) {
-                for item in children(of: menu) {
-                    // Modifiers 0 means ⌘ alone (kAXMenuItemModifierNone).
-                    guard (attribute(item, kAXMenuItemCmdCharAttribute) as? String)?.uppercased() == "C",
-                          (attribute(item, kAXMenuItemCmdModifiersAttribute) as? Int) == 0 else { continue }
-                    guard let enabled = attribute(item, kAXEnabledAttribute) as? Bool else { return .unknown }
-                    return enabled ? .enabled : .disabled
-                }
+                // Modifiers 0 means ⌘ alone (kAXMenuItemModifierNone).
+                if let item = children(of: menu).first(where: {
+                    (attribute($0, kAXMenuItemCmdCharAttribute) as? String)?.uppercased() == "C"
+                        && (attribute($0, kAXMenuItemCmdModifiersAttribute) as? Int) == 0
+                }) { return item }
             }
         }
-        return .unknown
+        return nil
     }
 
     private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
