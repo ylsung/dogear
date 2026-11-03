@@ -17,11 +17,14 @@ let captures = [
     QueueItem(source: Source(applicationName: "Marked", windowTitle: "README.md"), selectedContext: [.text("Old copy")], message: [.text("Revise this Markdown.")]),
     QueueItem(source: Source(applicationName: "Safari", windowTitle: "localhost:3000/index.html"), selectedContext: [.text("Save changes")], message: [.text("Revise this HTML state.")]),
     QueueItem(source: Source(applicationName: "Simulator", windowTitle: "iPhone 17 Pro"), selectedContext: [.image(screenshot)], message: [.text("Match this mobile layout.")]),
+    QueueItem(source: Source(applicationName: "Grok", windowTitle: "Chat"), selectedContext: [.text("Grok context")], message: [.text("Explain Grok context.")]),
+    QueueItem(source: Source(applicationName: "Gemini", windowTitle: "Chat"), selectedContext: [.text("Gemini context")], message: [.text("Explain Gemini context.")]),
+    QueueItem(source: Source(applicationName: "Antigravity", windowTitle: "Agent"), selectedContext: [.text("Antigravity context")], message: [.text("Explain Antigravity context.")]),
 ]
 let plan = PromptComposer.plan(for: captures, target: .codex)
 let events = DeliverySimulator().run(plan)
 
-precondition(captures.map(\.source.surface) == [.claude, .codex, .terminal, .pdf, .markdown, .html, .simulator])
+precondition(captures.map(\.source.surface) == [.claude, .codex, .terminal, .pdf, .markdown, .html, .simulator, .other, .other, .other])
 precondition(events.contains(.activate(.codex, nil)))
 precondition(events.contains(.pasteImage(screenshot)))
 precondition(DeliverySimulator().run(PromptComposer.plan(for: captures, target: .claude)).first == .activate(.claude, nil))
@@ -36,6 +39,10 @@ guard case .pasteText(let afterImage) = events[imageIndex + 1], afterImage.conta
 let prompt = PromptComposer.text(for: captures)
 precondition(prompt.contains("<question id=\"Q4\">\n<source>\nPDF: design.pdf — Preview, p.7\n</source>"))
 precondition(prompt.contains("<question id=\"Q5\">\n<source>\nMarkdown: README.md — Marked\n</source>"))
+for app in ["Grok", "Gemini", "Antigravity"] {
+    precondition(prompt.contains("\(app) context"))
+    precondition(prompt.contains("Explain \(app) context."))
+}
 
 let persistenceURL = FileManager.default.temporaryDirectory.appendingPathComponent("dogear-simulation-\(UUID().uuidString)/queue.json")
 try QueuePersistence.save(captures, to: persistenceURL)
@@ -55,4 +62,4 @@ precondition(CaptureRouter.owner(
     preferChromeExtension: false, preferVSCodeExtension: true
 ) == .desktop)
 
-print("PASS: capture routing, Claude, Codex, terminal, PDF, Markdown, HTML, Simulator, persistence, inline image, and no auto-send")
+print("PASS: capture routing, Claude, Codex, Grok, Gemini, Antigravity, terminal, PDF, Markdown, HTML, Simulator, persistence, inline image, and no auto-send")

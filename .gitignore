@@ -1,5 +1,6 @@
 .DS_Store
 artifacts/
+tests/compatibility/node_modules/
 
 # Internal planning doc — not part of the public project.
 /PRD.md

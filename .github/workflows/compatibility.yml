@@ -1,0 +1,41 @@
+name: Compatibility
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOGEAR_SIM_NODE_MODULES: ${{ github.workspace }}/tests/compatibility/node_modules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix tests/compatibility
+      - run: npm ci --prefix vscode
+      - run: npm run build --prefix vscode && npm run typecheck --prefix vscode
+      - run: node vscode/tests/simulator/capture.js
+      - run: cd tests/compatibility && npx playwright install --with-deps chromium
+      - run: npm test --prefix tests/compatibility
+      - run: npm run test:handoff --prefix tests/compatibility
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-compatibility
+          path: artifacts/
+          if-no-files-found: ignore
+  desktop:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path desktop
+      - run: swift run --package-path desktop DogearSimulation
