@@ -293,7 +293,9 @@ struct InlineQuestionEditor: NSViewRepresentable {
         editor.usesRolloverButtonForSelection = false
         editor.drawsBackground = false
         editor.textColor = DogearTheme.nsText
-        editor.insertionPointColor = DogearTheme.nsPrimary
+        // The text color, like the Chrome and VS Code composers: primary is
+        // too dark to see against the dark-mode panel.
+        editor.insertionPointColor = DogearTheme.nsText
         editor.textContainerInset = NSSize(width: 7, height: 7)
         editor.font = DogearTypography.editorFont
         editor.minSize = .zero

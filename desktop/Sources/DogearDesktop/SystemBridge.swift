@@ -1,6 +1,9 @@
 import AppKit
 import ApplicationServices
 import DogearCore
+import os
+
+private let captureLog = Logger(subsystem: "com.ylsung.dogear.desktop", category: "capture")
 
 struct FrontmostContext {
     var source: Source
@@ -18,6 +21,7 @@ final class SystemBridge {
         .codex: ["com.openai.codex", "com.openai.chat", "com.openai.chatgpt"],
         .terminal: [],
     ]
+    private let clipboard = ClipboardWatch()
 
     func frontmostContext() -> FrontmostContext {
         context(for: NSWorkspace.shared.frontmostApplication)
@@ -31,16 +35,111 @@ final class SystemBridge {
     }
 
     func captureSelectedText(from context: FrontmostContext, completion: @escaping (String?) -> Void) {
+        context.application?.activate(options: [.activateIgnoringOtherApps])
+        let app = context.application?.localizedName ?? "unknown"
+        // Ask the app for its selection first; no keystroke reaches the app.
+        if let selected = accessibilitySelectedText(in: context.application) {
+            captureLog.notice("\(app, privacy: .public): selection from Accessibility (\(selected.count) chars)")
+            completion(selected)
+            return
+        }
+        // An empty Accessibility answer is not proof: Terminal reports its
+        // cursor, not the mouse highlight, so copy and see what arrives.
+        let recent = clipboard.recentCopy(from: context.application?.bundleIdentifier, within: 10)
+        let recentText = recent.flatMap { _ in
+            NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         let snapshot = PasteboardSnapshot.capture()
         NSPasteboard.general.clearContents()
-        context.application?.activate(options: [.activateIgnoringOtherApps])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            self.sendCommandKey(8) // C
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                let selected = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                snapshot.restore()
-                completion(selected?.isEmpty == false ? selected : nil)
+        let cleared = NSPasteboard.general.changeCount
+        let finish = { (how: String) in
+            let pasteboard = NSPasteboard.general
+            let copied = pasteboard.changeCount == cleared ? nil
+                : pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            snapshot.restore()
+            self.clipboard.ownWrite(keeping: recent)
+            captureLog.notice("\(app, privacy: .public): \(how, privacy: .public) copied \(copied?.count ?? 0) chars")
+            if copied?.isEmpty == false { completion(copied); return }
+            // Full-screen terminal UIs (Claude Code, Codex, tmux with a
+            // pbcopy binding) draw their own highlight and copy it on mouse-up,
+            // so the terminal has nothing selected. A copy made in this app
+            // moments ago stands in for the selection.
+            if let recent, let recentText, !recentText.isEmpty {
+                captureLog.notice("\(app, privacy: .public): using its copy from \(Int(-recent.at.timeIntervalSinceNow))s ago (\(recentText.count) chars)")
+                completion(recentText)
+                return
             }
+            completion(nil)
+        }
+        // Pressing Edit → Copy through Accessibility runs the app's copy
+        // without a keystroke: no beep when nothing is selected. Its enabled
+        // state is not checked first, since apps refresh it only when the
+        // menu opens and Terminal's is usually stale.
+        if let item = copyMenuItem(in: context.application) {
+            let listedEnabled = attribute(item, kAXEnabledAttribute) as? Bool
+            if AXUIElementPerformAction(item, kAXPressAction as CFString) == .success {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    finish("Edit → Copy (listed \(listedEnabled.map { $0 ? "enabled" : "disabled" } ?? "unknown"))")
+                }
+                return
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            self.whenModifiersReleased {
+                self.sendCommandKey(8) // C
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { finish("⌘C") }
+            }
+        }
+    }
+
+    /// The focused element's selected text, or nil when there is none or the
+    /// app does not expose it to Accessibility.
+    private func accessibilitySelectedText(in application: NSRunningApplication?) -> String? {
+        guard let pid = application?.processIdentifier,
+              let focused = attribute(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute),
+              CFGetTypeID(focused) == AXUIElementGetTypeID(),
+              let text = attribute(focused as! AXUIElement, kAXSelectedTextAttribute) as? String else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The app's ⌘C menu item (normally Edit → Copy).
+    private func copyMenuItem(in application: NSRunningApplication?) -> AXUIElement? {
+        guard let pid = application?.processIdentifier,
+              let menuBar = attribute(AXUIElementCreateApplication(pid), kAXMenuBarAttribute),
+              CFGetTypeID(menuBar) == AXUIElementGetTypeID() else { return nil }
+        for menuBarItem in children(of: menuBar as! AXUIElement) {
+            for menu in children(of: menuBarItem) {
+                // Modifiers 0 means ⌘ alone (kAXMenuItemModifierNone).
+                if let item = children(of: menu).first(where: {
+                    (attribute($0, kAXMenuItemCmdCharAttribute) as? String)?.uppercased() == "C"
+                        && (attribute($0, kAXMenuItemCmdModifiersAttribute) as? Int) == 0
+                }) { return item }
+            }
+        }
+        return nil
+    }
+
+    private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+    }
+
+    private func children(of element: AXUIElement) -> [AXUIElement] {
+        (attribute(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+    }
+
+    /// Hotkeys fire on key-down, often while the user still holds ⌘⇧. A
+    /// synthetic ⌘C posted then reaches the app as ⌘⇧C, so wait (up to a
+    /// second) until no modifier is held.
+    private func whenModifiersReleased(_ work: @escaping () -> Void, deadline: Date = Date().addingTimeInterval(1)) {
+        let held: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+        if CGEventSource.flagsState(.hidSystemState).intersection(held).isEmpty || Date() >= deadline {
+            work()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            self.whenModifiersReleased(work, deadline: deadline)
         }
     }
 
@@ -71,13 +170,17 @@ final class SystemBridge {
                 ?? self.runningApplication(namedFor: plan.target) else {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(planFallback(plan), forType: .string)
+            clipboard.ownWrite()
             completion(false)
             return
         }
 
         app.activate(options: [.activateIgnoringOtherApps])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.paste(plan.chunks, index: 0) { completion(true) }
+            // Repeating the export hotkey delivers while ⌘⇧ may still be held.
+            self.whenModifiersReleased {
+                self.paste(plan.chunks, index: 0) { completion(true) }
+            }
         }
     }
 
@@ -100,6 +203,7 @@ final class SystemBridge {
             item.setString(url.absoluteString, forType: .fileURL)
             NSPasteboard.general.writeObjects([item])
         }
+        clipboard.ownWrite()
         sendCommandKey(9) // V. Never synthesize Enter.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
             self.paste(chunks, index: index + 1, completion: completion)
@@ -176,5 +280,49 @@ private struct PasteboardSnapshot {
             return item
         }
         NSPasteboard.general.writeObjects(restored)
+    }
+}
+
+/// The last clipboard change another app made, and which app was in front
+/// then. NSPasteboard posts no notifications, so the change count is polled.
+@MainActor
+private final class ClipboardWatch {
+    struct Copy {
+        var count: Int
+        var at: Date
+        var bundle: String?
+    }
+
+    private var seen = NSPasteboard.general.changeCount
+    private var last: Copy?
+    private var timer: Timer?
+
+    init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+    }
+
+    private func poll() {
+        let count = NSPasteboard.general.changeCount
+        guard count != seen else { return }
+        seen = count
+        last = Copy(count: count, at: Date(), bundle: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+    }
+
+    /// The clipboard's current contents, if `bundle` copied them within
+    /// `seconds`.
+    func recentCopy(from bundle: String?, within seconds: TimeInterval) -> Copy? {
+        poll()
+        guard let last, last.count == seen, last.bundle == bundle,
+              -last.at.timeIntervalSinceNow <= seconds else { return nil }
+        return last
+    }
+
+    /// Dogear's own writes are not copies. Restoring a snapshot puts `copy`
+    /// back as the latest one.
+    func ownWrite(keeping copy: Copy? = nil) {
+        seen = NSPasteboard.general.changeCount
+        last = copy.map { Copy(count: seen, at: $0.at, bundle: $0.bundle) }
     }
 }
