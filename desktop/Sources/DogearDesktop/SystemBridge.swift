@@ -1,6 +1,9 @@
 import AppKit
 import ApplicationServices
 import DogearCore
+import os
+
+private let captureLog = Logger(subsystem: "com.ylsung.dogear.desktop", category: "capture")
 
 struct FrontmostContext {
     var source: Source
@@ -32,14 +35,22 @@ final class SystemBridge {
 
     func captureSelectedText(from context: FrontmostContext, completion: @escaping (String?) -> Void) {
         context.application?.activate(options: [.activateIgnoringOtherApps])
-        // Ask the app for its selection first. No keystroke reaches the app,
-        // so an empty selection does not make it beep at a disabled Copy.
+        let app = context.application?.localizedName ?? "unknown"
+        // Ask the app for its selection first; no keystroke reaches the app.
         if let selected = accessibilitySelectedText(in: context.application) {
-            let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
-            completion(trimmed.isEmpty ? nil : trimmed)
+            captureLog.notice("\(app, privacy: .public): selection from Accessibility (\(selected.count) chars)")
+            completion(selected)
             return
         }
-        // Apps that do not expose their selection get a synthetic Copy.
+        // An empty Accessibility answer is not proof: Terminal reports its
+        // cursor, not the mouse highlight. A disabled Copy menu item is, and
+        // skipping ⌘C then avoids the beep apps make at a disabled Copy.
+        let copy = copyMenuState(in: context.application)
+        if copy == .disabled {
+            captureLog.notice("\(app, privacy: .public): Copy is disabled, so no selection")
+            completion(nil)
+            return
+        }
         let snapshot = PasteboardSnapshot.capture()
         NSPasteboard.general.clearContents()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
@@ -48,33 +59,53 @@ final class SystemBridge {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
                     let selected = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
                     snapshot.restore()
+                    captureLog.notice("\(app, privacy: .public): Copy is \(String(describing: copy), privacy: .public); ⌘C copied \(selected?.count ?? 0) chars")
                     completion(selected?.isEmpty == false ? selected : nil)
                 }
             }
         }
     }
 
-    /// The focused element's selected text, "" when it reports no selection,
-    /// or nil when the app does not expose its selection to Accessibility.
+    /// The focused element's selected text, or nil when there is none or the
+    /// app does not expose it to Accessibility.
     private func accessibilitySelectedText(in application: NSRunningApplication?) -> String? {
-        guard let pid = application?.processIdentifier else { return nil }
-        let app = AXUIElementCreateApplication(pid)
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focused else { return nil }
-        let element = focused as! AXUIElement
-        var selected: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selected) == .success,
-              let text = selected as? String else { return nil }
-        if !text.isEmpty { return text }
-        // Some web views answer "" while text is selected. Trust "no
-        // selection" only when the app also reports an empty selected range.
-        var range: CFTypeRef?
-        var value = CFRange()
-        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &range) == .success,
-              let range, CFGetTypeID(range) == AXValueGetTypeID(),
-              AXValueGetValue(range as! AXValue, .cfRange, &value), value.length == 0 else { return nil }
-        return ""
+        guard let pid = application?.processIdentifier,
+              let focused = attribute(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute),
+              CFGetTypeID(focused) == AXUIElementGetTypeID(),
+              let text = attribute(focused as! AXUIElement, kAXSelectedTextAttribute) as? String else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private enum CopyState { case enabled, disabled, unknown }
+
+    /// Whether the app's ⌘C menu item (Edit → Copy) is enabled. Apps enable
+    /// it only when something is selected.
+    private func copyMenuState(in application: NSRunningApplication?) -> CopyState {
+        guard let pid = application?.processIdentifier,
+              let menuBar = attribute(AXUIElementCreateApplication(pid), kAXMenuBarAttribute),
+              CFGetTypeID(menuBar) == AXUIElementGetTypeID() else { return .unknown }
+        for menuBarItem in children(of: menuBar as! AXUIElement) {
+            for menu in children(of: menuBarItem) {
+                for item in children(of: menu) {
+                    // Modifiers 0 means ⌘ alone (kAXMenuItemModifierNone).
+                    guard (attribute(item, kAXMenuItemCmdCharAttribute) as? String)?.uppercased() == "C",
+                          (attribute(item, kAXMenuItemCmdModifiersAttribute) as? Int) == 0 else { continue }
+                    guard let enabled = attribute(item, kAXEnabledAttribute) as? Bool else { return .unknown }
+                    return enabled ? .enabled : .disabled
+                }
+            }
+        }
+        return .unknown
+    }
+
+    private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+    }
+
+    private func children(of element: AXUIElement) -> [AXUIElement] {
+        (attribute(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
     }
 
     /// Hotkeys fire on key-down, often while the user still holds ⌘⇧. A
