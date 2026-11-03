@@ -22,3 +22,7 @@ node extension/tests/simulator/run.js
 
 Outputs are written to `artifacts/attachment-status-simulator.{json,webm}` and
 ignored by Git.
+
+The keyboard/capture regression suite is `node extension/tests/simulator/keyboard.js`.
+See [the compatibility matrix](../../../tests/compatibility/README.md) for the
+weekly CI schedule, complete setup, coverage, and live-check limitations.
