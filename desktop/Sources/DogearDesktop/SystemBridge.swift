@@ -31,16 +31,63 @@ final class SystemBridge {
     }
 
     func captureSelectedText(from context: FrontmostContext, completion: @escaping (String?) -> Void) {
+        context.application?.activate(options: [.activateIgnoringOtherApps])
+        // Ask the app for its selection first. No keystroke reaches the app,
+        // so an empty selection does not make it beep at a disabled Copy.
+        if let selected = accessibilitySelectedText(in: context.application) {
+            let trimmed = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+            completion(trimmed.isEmpty ? nil : trimmed)
+            return
+        }
+        // Apps that do not expose their selection get a synthetic Copy.
         let snapshot = PasteboardSnapshot.capture()
         NSPasteboard.general.clearContents()
-        context.application?.activate(options: [.activateIgnoringOtherApps])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            self.sendCommandKey(8) // C
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                let selected = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                snapshot.restore()
-                completion(selected?.isEmpty == false ? selected : nil)
+            self.whenModifiersReleased {
+                self.sendCommandKey(8) // C
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    let selected = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    snapshot.restore()
+                    completion(selected?.isEmpty == false ? selected : nil)
+                }
             }
+        }
+    }
+
+    /// The focused element's selected text, "" when it reports no selection,
+    /// or nil when the app does not expose its selection to Accessibility.
+    private func accessibilitySelectedText(in application: NSRunningApplication?) -> String? {
+        guard let pid = application?.processIdentifier else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused else { return nil }
+        let element = focused as! AXUIElement
+        var selected: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selected) == .success,
+              let text = selected as? String else { return nil }
+        if !text.isEmpty { return text }
+        // Some web views answer "" while text is selected. Trust "no
+        // selection" only when the app also reports an empty selected range.
+        var range: CFTypeRef?
+        var value = CFRange()
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &range) == .success,
+              let range, CFGetTypeID(range) == AXValueGetTypeID(),
+              AXValueGetValue(range as! AXValue, .cfRange, &value), value.length == 0 else { return nil }
+        return ""
+    }
+
+    /// Hotkeys fire on key-down, often while the user still holds ⌘⇧. A
+    /// synthetic ⌘C posted then reaches the app as ⌘⇧C, so wait (up to a
+    /// second) until no modifier is held.
+    private func whenModifiersReleased(_ work: @escaping () -> Void, deadline: Date = Date().addingTimeInterval(1)) {
+        let held: CGEventFlags = [.maskCommand, .maskShift, .maskAlternate, .maskControl]
+        if CGEventSource.flagsState(.hidSystemState).intersection(held).isEmpty || Date() >= deadline {
+            work()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            self.whenModifiersReleased(work, deadline: deadline)
         }
     }
 
@@ -77,7 +124,10 @@ final class SystemBridge {
 
         app.activate(options: [.activateIgnoringOtherApps])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            self.paste(plan.chunks, index: 0) { completion(true) }
+            // Repeating the export hotkey delivers while ⌘⇧ may still be held.
+            self.whenModifiersReleased {
+                self.paste(plan.chunks, index: 0) { completion(true) }
+            }
         }
     }
 
