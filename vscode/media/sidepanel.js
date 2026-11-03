@@ -4,20 +4,22 @@
 // prompt composition are identical to the Chrome side panel.
 
 const vscodeApi = acquireVsCodeApi();
+const { buildAssetPlan, composePrompt, renderParts } = globalThis.DOGEAR_COMPOSE;
 
 // Apply the global theme (see theme.js) as CSS variables.
 // Commissioner @font-face is injected by the host HTML (webview resource URIs).
 {
   const T = globalThis.DOGEAR_THEME;
   // VS Code marks the webview body with its theme kind; dark and high-contrast
-  // dark themes get the dark token set.
+  // dark themes get the dark token set unless the dogear.appearance setting
+  // (mirrored to body[data-theme]) pins light or dark.
   const vars = (colors) => Object.entries(colors).map(([k, v]) => `--${k}: ${v};`).join(' ');
   const s = document.createElement('style');
   s.textContent =
-    `:root { ${vars(T.colors)} --font: ${T.font.family}; }
-` +
-    `body.vscode-dark, body.vscode-high-contrast:not(.vscode-high-contrast-light) ` +
-    `{ ${vars(T.colorsDark)} color-scheme: dark; }`;
+    `:root { ${vars(T.colors)} --font: ${T.font.family}; }\n` +
+    `body.vscode-dark:not([data-theme="light"]), ` +
+    `body.vscode-high-contrast:not(.vscode-high-contrast-light):not([data-theme="light"]), ` +
+    `body[data-theme="dark"] { ${vars(T.colorsDark)} color-scheme: dark; }`;
   document.head.appendChild(s);
 }
 
@@ -84,6 +86,12 @@ window.addEventListener('message', (e) => {
       langSelect.value = promptLang;
     }
     document.getElementById('hotkey').textContent = msg.hotkeyHint;
+    if (msg.hotkeys) {
+      document.getElementById('export-hotkey').textContent = msg.hotkeys.export;
+      document.getElementById('clear-hotkey').textContent = msg.hotkeys.clear;
+    }
+    if (msg.appearance === 'light' || msg.appearance === 'dark') document.body.dataset.theme = msg.appearance;
+    else delete document.body.dataset.theme;
     if (structureChanged || !listEl.querySelector('.group')) render();
   } else if (msg.type === 'response') {
     const pending = pendingRequests.get(msg.requestId);
@@ -509,39 +517,6 @@ langSelect.addEventListener('change', () => {
   vscodeApi.postMessage({ type: 'setLang', lang: promptLang });
 });
 
-// Privacy (same policy as the Chrome side panel's sourceCitation): the full
-// file:// URI reveals the username and folder structure, and the composed
-// prompt leaves the machine. The workspace-relative title already identifies
-// the file, so local sources are cited as just "local file".
-function sourceCitation(item, P) {
-  if (/^https?:/i.test(item.url)) return { title: item.title, url: item.url };
-  return { title: item.title, url: P.localFile || 'local file' };
-}
-
-function safeFilename(name) {
-  return String(name || 'image')
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')
-    .replace(/^\.+/, '') || 'image';
-}
-
-function buildAssetPlan(queue) {
-  const parts = queue.flatMap((item) => [
-    ...(item.selectedContext || []),
-    ...(item.message?.parts || []),
-  ]);
-  const seen = new Set();
-  return parts.flatMap((part) => {
-    if (part.type !== 'asset' || seen.has(part.assetId)) return [];
-    seen.add(part.assetId);
-    const index = seen.size;
-    return [{
-      id: part.assetId,
-      label: `Image I${index}`,
-      deliveredName: `I${index}-${safeFilename(part.label)}`,
-    }];
-  });
-}
-
 function renderManualHandoff() {
   const assets = manualHandoffAssets;
   handoffEl.hidden = !assets.length;
@@ -596,56 +571,6 @@ function syncManualHandoff(assets) {
   if (firstImages) handoffEl.open = false;
 }
 
-function renderParts(parts, labels) {
-  return (parts || []).map((part) =>
-    part.type === 'text' ? part.text : `[${labels.get(part.assetId) || 'Missing image'}]`,
-  ).join('');
-}
-
-function composePrompt(queue, assets) {
-  const P = globalThis.DOGEAR_PROMPTS[promptLang] || globalThis.DOGEAR_PROMPTS.en;
-  const lines = [P.header(queue.length)];
-  const labels = new Map(assets.map((asset) => [asset.id, asset.label]));
-
-  let lastUrl = null;
-  let sourceIdx = 0;
-  queue.forEach((item, idx) => {
-    if (item.url !== lastUrl) {
-      sourceIdx += 1;
-      const letter = String.fromCharCode(64 + sourceIdx); // A, B, C…
-      const cite = sourceCitation(item, P);
-      lines.push('', P.source(letter, cite.title, cite.url));
-      lastUrl = item.url;
-    }
-    // Location suffix: PDF page in Chrome, line numbers here. P.lines is an
-    // optional pack key (older packs simply omit the location).
-    const where = item.page
-      ? P.pdfPage(item.page)
-      : item.lines && P.lines
-        ? P.lines(item.lines.start, item.lines.end)
-        : '';
-    const contextParts = item.selectedContext || [];
-    const contextText = renderParts(contextParts, labels);
-    const hasContextImage = contextParts.some((part) => part.type === 'asset');
-    lines.push('', !contextParts.length
-      ? P.pageQuestion(idx + 1)
-      : hasContextImage
-        ? P.multimodalSelection(idx + 1, where, contextText)
-        : P.excerpt(idx + 1, where, contextText || item.anchor.exact));
-    if (item.anchor.prefix || item.anchor.suffix) {
-      lines.push(P.context(item.anchor.prefix, item.anchor.suffix));
-    }
-    lines.push(P.question(renderParts(item.message?.parts, labels)));
-  });
-
-  if (assets.length) {
-    lines.push('', P.attachmentsHeader);
-    assets.forEach((asset) => lines.push(P.attachment(asset.label, asset.deliveredName)));
-  }
-
-  return lines.join('\n');
-}
-
 async function composeOrWarn() {
   const queue = await getQueue();
   if (!queue.length) {
@@ -656,7 +581,7 @@ async function composeOrWarn() {
     note(`Heads up: ${queue.length} queries in one prompt may dilute answer quality.`);
   }
   const assets = buildAssetPlan(queue);
-  return { text: composePrompt(queue, assets), assets };
+  return { text: composePrompt(queue, assets, promptLang), assets };
 }
 
 // ---------- delivery ----------

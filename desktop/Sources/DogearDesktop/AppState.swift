@@ -18,6 +18,24 @@ final class AppState: ObservableObject {
     @Published var preferVSCodeExtension: Bool {
         didSet { defaults.set(preferVSCodeExtension, forKey: "preferVSCodeExtension") }
     }
+    @Published var shortcuts: ShortcutSettings {
+        didSet { defaults.set(shortcuts.encoded(), forKey: "shortcuts") }
+    }
+    /// Actions whose combo macOS refused (another app already registered it).
+    @Published var unavailableShortcuts: Set<HotKeyAction> = []
+    @Published var appearance: AppearanceSetting {
+        didSet {
+            defaults.set(appearance.rawValue, forKey: "appearance")
+            appearance.apply()
+        }
+    }
+    @Published var lastExportDestination: ExportDestination {
+        didSet { defaults.set(lastExportDestination.rawValue, forKey: "lastExportDestination") }
+    }
+    /// The last clear, kept (with its images) for ClearUndo.window.
+    private var cleared: (items: [QueueItem], at: Date)?
+    /// Drives the queue window's Undo button after a clear.
+    @Published private(set) var clearUndoOffered = false
 
     private let queueURL: URL
     private let defaults: UserDefaults
@@ -27,6 +45,9 @@ final class AppState: ObservableObject {
         self.defaults = defaults
         preferChromeExtension = defaults.object(forKey: "preferChromeExtension") as? Bool ?? true
         preferVSCodeExtension = defaults.object(forKey: "preferVSCodeExtension") as? Bool ?? true
+        shortcuts = ShortcutSettings.load(from: defaults.data(forKey: "shortcuts"))
+        appearance = AppearanceSetting(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
+        lastExportDestination = ExportDestination(rawValue: defaults.string(forKey: "lastExportDestination") ?? "") ?? .copy
         let base = baseDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("DogearDesktop", isDirectory: true)
         queueURL = base.appendingPathComponent("queue.json")
@@ -126,10 +147,41 @@ final class AppState: ObservableObject {
         save()
     }
 
-    func clear() {
-        let removedPaths = queue.flatMap(\.images).map(\.path)
+    /// Empties the queue without confirmation; `undoClear` restores it within
+    /// ClearUndo.window. Returns how many questions were cleared.
+    @discardableResult
+    func clear() -> Int {
+        guard !queue.isEmpty else { return 0 }
+        let previous = cleared
+        cleared = (queue, Date())
+        clearUndoOffered = true
+        let count = queue.count
         queue.removeAll()
-        if save() { removeManagedAssetsIfUnreferenced(removedPaths) }
+        guard save() else { return 0 }
+        // The clear this one replaces is no longer undoable.
+        if let previous { removeManagedAssetsIfUnreferenced(previous.items.flatMap(\.images).map(\.path)) }
+        status = "Cleared \(count) \(count == 1 ? "question" : "questions")"
+        return count
+    }
+
+    var canUndoClear: Bool {
+        guard let cleared else { return false }
+        return Date().timeIntervalSince(cleared.at) < ClearUndo.window
+    }
+
+    /// Returns how many questions came back (0 when nothing is undoable).
+    @discardableResult
+    func undoClear() -> Int {
+        clearUndoOffered = false
+        guard canUndoClear, let cleared else {
+            status = "Nothing to restore"
+            return 0
+        }
+        self.cleared = nil
+        queue = ClearUndo.restore(cleared.items, into: queue)
+        save()
+        status = "Restored \(cleared.items.count) \(cleared.items.count == 1 ? "question" : "questions")"
+        return cleared.items.count
     }
 
     func copyPrompt() {
@@ -150,7 +202,8 @@ final class AppState: ObservableObject {
     }
 
     private var referencedAssetPaths: Set<String> {
-        var paths = Set(queue.flatMap(\.images).map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
+        let undoable = canUndoClear ? cleared?.items ?? [] : []
+        var paths = Set((queue + undoable).flatMap(\.images).map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
         if let draft {
             for case .image(let image) in draft.context + draft.message {
                 paths.insert(URL(fileURLWithPath: image.path).standardizedFileURL.path)
@@ -184,6 +237,28 @@ final class AppState: ObservableObject {
                 "Finish or cancel the current question before restarting."])
         }
         try QueuePersistence.save(queue, to: queueURL)
+    }
+}
+
+enum AppearanceSetting: String, CaseIterable {
+    case system
+    case light
+    case dark
+
+    var title: String {
+        switch self {
+        case .system: return "Match system"
+        case .light: return "Light"
+        case .dark: return "Dark"
+        }
+    }
+
+    func apply() {
+        switch self {
+        case .system: NSApp?.appearance = nil
+        case .light: NSApp?.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp?.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 }
 

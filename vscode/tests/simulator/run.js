@@ -90,6 +90,7 @@ const fixture = `<!doctype html>
   <script src="/media/prompts/index.js"></script>
   <script src="/media/prompts/en.js"></script>
   <script src="/media/prompts/zh-TW.js"></script>
+  <script src="/media/compose.js"></script>
   <script src="/media/sidepanel.js"></script>
 </body>
 </html>`;
@@ -141,7 +142,7 @@ async function main() {
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     const initial = initialItem();
     await page.evaluate((queue) => window.dispatchEvent(new MessageEvent('message', { data: {
-      type: 'state', queue, assets: {}, promptLang: 'en', hotkeyHint: 'Ctrl+Alt+Q',
+      type: 'state', queue, assets: {}, promptLang: 'en', hotkeyHint: 'Ctrl+Shift+E',
     }})), [initial]);
     await page.locator('.card').waitFor();
 
@@ -190,7 +191,7 @@ async function main() {
     };
     const queue = [initial, mixed, imageContext];
     await page.evaluate(({ queue, previews }) => window.dispatchEvent(new MessageEvent('message', {
-      data: { type: 'state', queue, assets: previews, promptLang: 'en', hotkeyHint: 'Ctrl+Alt+Q' },
+      data: { type: 'state', queue, assets: previews, promptLang: 'en', hotkeyHint: 'Ctrl+Shift+E' },
     })), { queue, previews });
     await page.locator('.card[data-id="q3"] .context-images img').waitFor();
     assert.equal(await page.locator('.card[data-id="q2"] .dogear-asset-chip').count(), 3);
@@ -201,7 +202,7 @@ async function main() {
       document.querySelector('.card[data-id="q2"]').dataset.mountMarker = 'stable';
     });
     await page.evaluate(({ queue, previews }) => window.dispatchEvent(new MessageEvent('message', {
-      data: { type: 'state', queue, assets: previews, promptLang: 'en', hotkeyHint: 'Ctrl+Alt+Q' },
+      data: { type: 'state', queue, assets: previews, promptLang: 'en', hotkeyHint: 'Ctrl+Shift+E' },
     })), { queue, previews });
     assert.equal(
       await page.locator('.card[data-id="q2"]').getAttribute('data-mount-marker'),
@@ -251,7 +252,7 @@ async function main() {
       message.queue.find((item) => item.id === 'q2')?.message.parts
         .filter((part) => part.type === 'asset').length === 2));
     await page.evaluate(({ queue, previews }) => window.dispatchEvent(new MessageEvent('message', {
-      data: { type: 'state', queue, assets: previews, promptLang: 'en', hotkeyHint: 'Ctrl+Alt+Q' },
+      data: { type: 'state', queue, assets: previews, promptLang: 'en', hotkeyHint: 'Ctrl+Shift+E' },
     })), { queue, previews });
     await page.locator('#copy').click();
     const copiedAfterStaleEcho = await page.evaluate(() =>

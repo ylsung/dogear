@@ -8,13 +8,16 @@
 <body>
   <header>
     <h1 id="brand"><img class="brand-mark" src="icons/mark.svg" alt="" />Dogear</h1>
-    <span id="count"></span>
+    <span class="header-right">
+      <span id="count"></span>
+      <button id="settings" title="Settings: shortcuts, appearance, prompt language" aria-label="Settings">⚙</button>
+    </span>
   </header>
 
   <main id="list">
     <p class="empty" id="empty">
       Select text and press <kbd id="hotkey">…</kbd>, or press it without a text
-      selection to capture a screenshot. Your anchored queries collect here.
+      selection to capture a screenshot. Your anchored queries collect here.<span id="more-hotkeys"></span>
       <br /><br />
       Click a card to select it (<kbd>Shift</kbd>/<kbd>⌘</kbd>-click for several). Use the ⋮⋮ handles to reorder.
     </p>
@@ -54,6 +57,7 @@
   <script src="prompts/zh-TW.js"></script>
   <script src="model.js"></script>
   <script src="asset-store.js"></script>
+  <script src="actions.js"></script>
   <script src="composer.js"></script>
   <script src="sidepanel.js"></script>
 </body>

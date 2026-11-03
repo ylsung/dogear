@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Dogear settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <h1><img class="brand-mark" src="icons/mark.svg" alt="" />Dogear settings</h1>
+
+    <section>
+      <h2>Keyboard shortcuts</h2>
+      <p class="hint">
+        Chrome manages extension shortcuts itself. If a shortcut shows “Not set”, another
+        extension already uses it — pick a different one on Chrome's shortcuts page.
+      </p>
+      <table id="shortcuts"></table>
+      <button id="edit-shortcuts">Change shortcuts…</button>
+    </section>
+
+    <section>
+      <h2>Appearance</h2>
+      <div class="choices" role="radiogroup" aria-label="Appearance">
+        <label><input type="radio" name="appearance" value="system" /> Match system</label>
+        <label><input type="radio" name="appearance" value="light" /> Light</label>
+        <label><input type="radio" name="appearance" value="dark" /> Dark</label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Prompt language</h2>
+      <p class="hint">Language of the composed prompt sent to the AI — not this interface.</p>
+      <select id="lang"></select>
+    </section>
+  </main>
+
+  <script src="theme.js"></script>
+  <script src="prompts/index.js"></script>
+  <script src="prompts/en.js"></script>
+  <script src="prompts/zh-TW.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

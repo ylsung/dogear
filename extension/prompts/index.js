@@ -8,8 +8,9 @@
 //
 // To add a language:
 //   1. Copy prompts/en.js to prompts/<code>.js and translate each function.
-//   2. Add a <script src="prompts/<code>.js"> tag to sidepanel.html
-//      (after prompts/index.js).
+//   2. Add a <script src="prompts/<code>.js"> tag to sidepanel.html and
+//      options.html (after prompts/index.js), and add the file to the
+//      importScripts list in background.js.
 // It then appears automatically in the side panel's language picker; the
 // user's choice is persisted. DEFAULT_LANG applies until a choice is made.
 // ============================================================================

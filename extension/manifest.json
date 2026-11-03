@@ -39,10 +39,22 @@
       "32": "icons/toolbar32.png"
     }
   },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
   "commands": {
     "ask-selection": {
-      "suggested_key": { "default": "Alt+Q", "mac": "MacCtrl+Q" },
-      "description": "Dogear: ask about a text or screenshot selection"
+      "suggested_key": { "default": "Ctrl+Shift+E", "mac": "Command+Shift+E" },
+      "description": "Ask about a text or screenshot selection"
+    },
+    "export-prompt": {
+      "suggested_key": { "default": "Ctrl+Shift+X", "mac": "Command+Shift+X" },
+      "description": "Export the queue (copy prompt, or send to a chat)"
+    },
+    "clear-queue": {
+      "suggested_key": { "default": "Ctrl+Shift+0", "mac": "Command+Shift+0" },
+      "description": "Clear the queue (undoable)"
+    },
+    "_execute_action": {
+      "description": "Open the queue"
     }
   }
 }

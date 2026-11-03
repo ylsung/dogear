@@ -1,20 +1,76 @@
 // Dogear background service worker: context menu, hotkey routing, badge count.
 
-importScripts('theme.js', 'model.js', 'asset-store.js');
+importScripts(
+  'theme.js', 'model.js', 'asset-store.js',
+  'prompts/index.js', 'prompts/en.js', 'prompts/zh-TW.js',
+  'actions.js',
+);
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
+const ACTIONS = globalThis.DOGEAR_ACTIONS;
+
+// ---------- context menu ----------
+// Everything sits under one "Dogear" parent. Titles carry the live shortcut
+// (users can rebind it) and the queue count, so they are rebuilt on change.
+
+const PAGE_CONTEXTS = ['page', 'selection', 'link', 'image', 'frame', 'editable'];
+
+function withShortcut(title, shortcut) {
+  return shortcut ? `${title}  (${shortcut})` : title;
+}
+
+async function buildContextMenu() {
+  const commands = await chrome.commands.getAll();
+  const shortcut = (name) => commands.find((c) => c.name === name)?.shortcut || '';
+  const { queue = [] } = await chrome.storage.local.get('queue');
+  const count = queue.length;
+  await chrome.contextMenus.removeAll();
+  const add = (props) => chrome.contextMenus.create({ parentId: 'dogear', ...props });
+  chrome.contextMenus.create({ id: 'dogear', title: 'Dogear', contexts: PAGE_CONTEXTS });
+  add({
     id: 'dogear-ask',
-    title: 'Dogear: ask about selection',
+    title: withShortcut('Ask about selection', shortcut('ask-selection')),
     contexts: ['selection'],
   });
-  chrome.contextMenus.create({
+  add({ id: 'dogear-ask-page', title: 'Ask about this page', contexts: PAGE_CONTEXTS });
+  add({ id: 'dogear-capture', title: 'Capture screenshot and ask', contexts: PAGE_CONTEXTS });
+  add({ id: 'dogear-sep-1', type: 'separator', contexts: PAGE_CONTEXTS });
+  add({
+    id: 'dogear-open-queue',
+    title: withShortcut(count ? `Open queue (${count})` : 'Open queue', shortcut('_execute_action')),
+    contexts: PAGE_CONTEXTS,
+  });
+  add({
+    id: 'dogear-export',
+    title: withShortcut('Export prompt…', shortcut('export-prompt')),
+    contexts: PAGE_CONTEXTS,
+    enabled: count > 0,
+  });
+  add({
+    id: 'dogear-clear',
+    title: withShortcut(count ? `Clear queue (${count})` : 'Clear queue', shortcut('clear-queue')),
+    contexts: PAGE_CONTEXTS,
+    enabled: count > 0,
+  });
+  add({ id: 'dogear-sep-2', type: 'separator', contexts: PAGE_CONTEXTS });
+  add({
     id: 'dogear-open-pdf',
     title: 'Open PDF in Dogear viewer',
     contexts: ['link'],
     targetUrlPatterns: ['*://*/*.pdf*', '*://*/pdf/*'],
   });
-});
+  add({ id: 'dogear-settings', title: 'Settings…', contexts: PAGE_CONTEXTS });
+}
+
+// Serialize rebuilds: removeAll/create from two overlapping calls would
+// otherwise collide on duplicate ids.
+let menuBuild = Promise.resolve();
+function refreshContextMenu() {
+  menuBuild = menuBuild.then(buildContextMenu).catch(() => {});
+  return menuBuild;
+}
+
+chrome.runtime.onInstalled.addListener(refreshContextMenu);
+chrome.runtime.onStartup.addListener(refreshContextMenu);
 
 function viewerUrl(pdfUrl) {
   return `${chrome.runtime.getURL('pdfjs/web/viewer.html')}?file=${encodeURIComponent(pdfUrl)}`;
@@ -38,12 +94,71 @@ function openAsk(tabId, requestedFrameId) {
   });
 }
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'dogear-ask' && tab && tab.id != null) {
-    openAsk(tab.id, Number.isInteger(info.frameId) ? info.frameId : undefined);
+// Pages where content scripts never run, so on-page UI cannot appear.
+function isRestrictedUrl(url) {
+  return !url || /^(chrome|edge|about|devtools|view-source):/i.test(url) ||
+    /^https:\/\/chrome(webstore)?\.google\.com\/webstore/i.test(url) ||
+    (url.startsWith('chrome-extension:') && !url.startsWith(chrome.runtime.getURL('pdfjs/')));
+}
+
+function tellPage(tabId, msg) {
+  return chrome.tabs.sendMessage(tabId, msg, { frameId: 0 }).then(() => true, () => false);
+}
+
+// The export popup lives on the page; where it cannot (browser pages) the
+// queue's own export buttons stand in. sidePanel.open must run before any
+// await, or Chrome no longer treats the call as part of the user gesture.
+async function openExport(tab) {
+  if (isRestrictedUrl(tab.url)) {
+    chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
+    return;
   }
-  if (info.menuItemId === 'dogear-open-pdf' && info.linkUrl) {
-    chrome.tabs.create({ url: viewerUrl(info.linkUrl) });
+  const { queue = [], lastExportTarget } = await chrome.storage.local.get(['queue', 'lastExportTarget']);
+  if (!queue.length) {
+    tellPage(tab.id, { type: 'dogear-toast', text: 'Dogear: the queue is empty.' });
+    return;
+  }
+  tellPage(tab.id, {
+    type: 'dogear-open-export',
+    count: queue.length,
+    targets: ACTIONS.TARGETS,
+    last: lastExportTarget || 'copy',
+  });
+}
+
+async function clearFromPage(tab) {
+  const cleared = await ACTIONS.clearQueue();
+  if (!tab || isRestrictedUrl(tab.url)) return;
+  tellPage(tab.id, cleared ? { type: 'dogear-cleared', count: cleared } : { type: 'dogear-toast', text: 'Dogear: the queue is already empty.' });
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  const tabId = tab && tab.id != null ? tab.id : null;
+  switch (info.menuItemId) {
+    case 'dogear-ask':
+      if (tabId != null) openAsk(tabId, Number.isInteger(info.frameId) ? info.frameId : undefined);
+      break;
+    case 'dogear-ask-page':
+      if (tabId != null) tellPage(tabId, { type: 'dogear-open-page-ask' });
+      break;
+    case 'dogear-capture':
+      if (tabId != null) tellPage(tabId, { type: 'dogear-start-region' });
+      break;
+    case 'dogear-open-queue':
+      if (tabId != null) chrome.sidePanel.open({ tabId }).catch(() => {});
+      break;
+    case 'dogear-export':
+      if (tab) openExport(tab);
+      break;
+    case 'dogear-clear':
+      clearFromPage(tab);
+      break;
+    case 'dogear-open-pdf':
+      if (info.linkUrl) chrome.tabs.create({ url: viewerUrl(info.linkUrl) });
+      break;
+    case 'dogear-settings':
+      chrome.runtime.openOptionsPage();
+      break;
   }
 });
 
@@ -69,6 +184,39 @@ function setToolbarIcon(dark) {
     .setIcon({ path: { 16: `icons/toolbar16${suffix}.png`, 32: `icons/toolbar32${suffix}.png` } })
     .catch(() => {});
 }
+
+// Requests from the on-page export popup and clear toast. The page cannot
+// reach chat tabs or extension storage itself; clipboard writes stay on the
+// page, which holds the user's click.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || !sender.tab) return false;
+  if (msg.type === 'dogear-export') {
+    (async () => {
+      const delivery = await ACTIONS.compose();
+      if (delivery.error) return sendResponse({ ok: false, note: delivery.error });
+      await chrome.storage.local.set({ lastExportTarget: msg.target });
+      if (msg.target === 'copy') {
+        return sendResponse({ ok: true, copy: delivery.text, imageCount: delivery.assets.length, warning: delivery.warning });
+      }
+      const outcome = await ACTIONS.deliverToChat(msg.target, delivery);
+      sendResponse({
+        ok: true,
+        copy: outcome.status === 'copy' ? delivery.text : null,
+        outcome,
+        imageCount: delivery.assets.length,
+        note: ACTIONS.chatNote(outcome, delivery),
+        failedNote: ACTIONS.chatNote(outcome, delivery, false),
+        warning: delivery.warning,
+      });
+    })().catch((error) => sendResponse({ ok: false, note: error.message || 'Export failed.' }));
+    return true;
+  }
+  if (msg.type === 'dogear-undo-clear') {
+    ACTIONS.undoClear().then((restored) => sendResponse({ restored }), () => sendResponse({ restored: 0 }));
+    return true;
+  }
+  return false;
+});
 
 // Content scripts run in the page's storage origin, so image bytes captured by
 // the on-page composer cross this validated bridge into extension IndexedDB.
@@ -150,7 +298,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.commands.onCommand.addListener((command, tab) => {
-  if (command === 'ask-selection' && tab && tab.id != null) openAsk(tab.id);
+  if (!tab || tab.id == null) return;
+  if (command === 'ask-selection') openAsk(tab.id);
+  if (command === 'export-prompt') openExport(tab);
+  if (command === 'clear-queue') clearFromPage(tab);
 });
 
 async function updateBadge() {
@@ -160,7 +311,12 @@ async function updateBadge() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.queue) updateBadge();
+  if (area === 'local' && changes.queue) {
+    updateBadge();
+    const before = (changes.queue.oldValue || []).length;
+    const after = (changes.queue.newValue || []).length;
+    if (before !== after) refreshContextMenu();
+  }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {

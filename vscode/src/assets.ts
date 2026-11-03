@@ -50,6 +50,13 @@ export class AssetStore {
     this.root = vscode.Uri.joinPath(scope, 'multimodal-assets');
   }
 
+  // Extra ids every garbage collection must keep (e.g. an undoable clear).
+  private retainers: Array<() => Iterable<string>> = [];
+
+  retainAlso(retainer: () => Iterable<string>): void {
+    this.retainers.push(retainer);
+  }
+
   all(): AssetRecord[] {
     return this.context.workspaceState.get<AssetRecord[]>(ASSET_INDEX_KEY, []);
   }
@@ -109,7 +116,7 @@ export class AssetStore {
   }
 
   async removeUnreferenced(referencedIds: Iterable<string>): Promise<string[]> {
-    const keep = new Set(referencedIds);
+    const keep = new Set([...referencedIds, ...this.retainers.flatMap((retainer) => [...retainer()])]);
     const assets = this.all();
     const retained: AssetRecord[] = [];
     const removed: string[] = [];
