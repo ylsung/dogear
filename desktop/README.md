@@ -20,7 +20,22 @@ and use the same certificate on subsequent builds. The local signing helper uses
 OpenSSL 3 and a dedicated keychain; it temporarily adds that keychain to the user
 search list while signing, then restores the list. It does not change certificate
 trust settings. Do not share the generated private key or keychain password.
-Distribution still requires the appropriate signing and notarization.
+
+### Releasing a notarized build
+
+With a Developer ID Application certificate and a notary profile saved once
+with `xcrun notarytool store-credentials dogear-notary --apple-id <Apple ID>
+--team-id <team ID>` (it asks for an app-specific password):
+
+```bash
+DOGEAR_SIGNING_IDENTITY="Developer ID Application: <Name> (<team ID>)" ./build-app.sh
+DOGEAR_NOTARY_PROFILE=dogear-notary ./package-release.sh
+```
+
+The build signs with the hardened runtime and a secure timestamp. Packaging
+notarizes and staples the app, builds the DMG and zip from it, then signs,
+notarizes and staples the DMG and checks it with Gatekeeper. Raise
+`CFBundleShortVersionString` and `CFBundleVersion` in `App/Info.plist` first.
 
 When a capture hotkey or delivery action needs Accessibility and access is off,
 Dogear automatically requests permission and shows a centered red notice with an

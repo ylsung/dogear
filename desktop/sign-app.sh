@@ -4,7 +4,11 @@ set -euo pipefail
 app_path="$1"
 bundle_id="com.ylsung.dogear.desktop"
 if [[ -n "${DOGEAR_SIGNING_IDENTITY:-}" ]]; then
-    codesign --force --sign "$DOGEAR_SIGNING_IDENTITY" --identifier "$bundle_id" "$app_path"
+    # Notarization requires the hardened runtime and a secure timestamp.
+    # Dogear needs no runtime exceptions: Accessibility, synthetic keystrokes
+    # and screencapture all work under it.
+    codesign --force --options runtime --timestamp \
+        --sign "$DOGEAR_SIGNING_IDENTITY" --identifier "$bundle_id" "$app_path"
 else
     # Keep the certificate stable across builds without changing trust settings.
     signing_dir="${DOGEAR_SIGNING_DIRECTORY:-$HOME/Library/Application Support/DogearDevelopmentSigning}"
