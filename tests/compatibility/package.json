@@ -2,8 +2,8 @@
   "name": "dogear-compatibility-tests",
   "private": true,
   "scripts": {
-    "test": "node ../../extension/tests/model.test.js && node ../../extension/tests/simulator/keyboard.js && node ../../vscode/tests/simulator/run.js",
-    "test:handoff": "node ../../extension/tests/simulator/run.js"
+    "test": "node --test ../../extension/tests/model.test.js ../../extension/tests/handoff.test.js && node ../../extension/tests/simulator/keyboard.js && node ../../vscode/tests/simulator/run.js",
+    "test:handoff": "node --test ../../extension/tests/handoff.test.js && node ../../extension/tests/simulator/handoff.js && node ../../extension/tests/simulator/run.js"
   },
   "devDependencies": {
     "playwright": "1.62.1",

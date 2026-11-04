@@ -151,12 +151,27 @@
 
   // Runs inside the chat tab. Finds the composer and inserts text at the end,
   // leaving the prompt in the box for the user to review and send (PRD decision).
-  function injectPrompt(text) {
-    const el =
-      document.querySelector('#prompt-textarea') || // chatgpt.com (ProseMirror div)
-      document.querySelector('div[contenteditable="true"].ProseMirror') || // claude.ai
-      document.querySelector('main div[contenteditable="true"]') ||
-      document.querySelector('main textarea');
+  async function injectPrompt(text) {
+    // ChatGPT's home composer can live outside <main>. Prefer known editors,
+    // then accessible textbox editors; never select a hidden duplicate.
+    const selectors = [
+      '#prompt-textarea',
+      'div[contenteditable="true"].ProseMirror',
+      '[contenteditable="true"][data-lexical-editor="true"]',
+      '[contenteditable="true"][role="textbox"]',
+      '[contenteditable="true"][aria-label="Ask ChatGPT"]',
+      'main div[contenteditable="true"]',
+      'textarea[placeholder="Ask ChatGPT"]',
+      'main textarea',
+    ];
+    let el;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      el = selectors.flatMap((selector) => [...document.querySelectorAll(selector)])
+        .find((candidate) => candidate.getClientRects().length &&
+          !candidate.disabled && candidate.getAttribute('contenteditable') !== 'false');
+      if (el) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     if (!el) return false;
     el.focus();
     if (el.tagName === 'TEXTAREA') {
@@ -191,11 +206,18 @@
         lastModified: payload.lastModified,
       }));
     }
-    const composer =
-      document.querySelector('#prompt-textarea') ||
-      document.querySelector('div[contenteditable="true"].ProseMirror') ||
-      document.querySelector('main div[contenteditable="true"]') ||
-      document.querySelector('main textarea');
+    const composer = [
+      '#prompt-textarea',
+      'div[contenteditable="true"].ProseMirror',
+      '[contenteditable="true"][data-lexical-editor="true"]',
+      '[contenteditable="true"][role="textbox"]',
+      '[contenteditable="true"][aria-label="Ask ChatGPT"]',
+      'main div[contenteditable="true"]',
+      'textarea[placeholder="Ask ChatGPT"]',
+      'main textarea',
+    ].flatMap((selector) => [...document.querySelectorAll(selector)])
+      .find((candidate) => candidate.getClientRects().length &&
+        !candidate.disabled && candidate.getAttribute('contenteditable') !== 'false');
     const inputs = [...document.querySelectorAll('input[type="file"]')];
     const acceptsImages = (candidate) => /image|\*|png|jpe?g|webp/i.test(candidate.accept || '');
     const input =
@@ -283,10 +305,6 @@
     // Inject first, focus after: once the chat tab is focused the side panel
     // loses focus and clipboard writes are rejected ("Document is not focused").
     const tab = tabs.find((t) => t.active) || tabs[0];
-    const attachmentOutcome = delivery.assets.length
-      ? await attachAssetsToTab(tab, delivery.assets)
-      : { ok: true };
-    const imagesFailed = !!delivery.assets.length && !attachmentOutcome.ok;
     let inserted = false;
     try {
       const [result] = await chrome.scripting.executeScript({
@@ -298,6 +316,10 @@
     } catch (e) {
       inserted = false;
     }
+    const attachmentOutcome = delivery.assets.length
+      ? await attachAssetsToTab(tab, delivery.assets)
+      : { ok: true };
+    const imagesFailed = !!delivery.assets.length && !attachmentOutcome.ok;
     if (!inserted) return { status: 'copy', label: cfg.label, imagesFailed };
     await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(tab.id, { active: true });
