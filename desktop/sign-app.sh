@@ -3,12 +3,24 @@ set -euo pipefail
 
 app_path="$1"
 bundle_id="com.ylsung.dogear.desktop"
-if [[ -n "${DOGEAR_SIGNING_IDENTITY:-}" ]]; then
+signing_identity="${DOGEAR_SIGNING_IDENTITY:-}"
+if [[ -z "$signing_identity" ]]; then
+    # macOS keeps one Screen Recording and Accessibility approval per bundle ID,
+    # tied to the signer of whichever copy System Settings resolves. Copies
+    # signed by different certificates then keep revoking each other's access,
+    # so sign every build like the release when its identity is installed.
+    developer_ids="$(security find-identity -v -p codesigning \
+        | sed -n 's/^ *[0-9]*) [0-9A-F]* "\(Developer ID Application: .*\)"$/\1/p' | sort -u)"
+    if [[ -n "$developer_ids" && "$(wc -l <<< "$developer_ids")" -eq 1 ]]; then
+        signing_identity="$developer_ids"
+    fi
+fi
+if [[ -n "$signing_identity" ]]; then
     # Notarization requires the hardened runtime and a secure timestamp.
     # Dogear needs no runtime exceptions: Accessibility, synthetic keystrokes
     # and screencapture all work under it.
     codesign --force --options runtime --timestamp \
-        --sign "$DOGEAR_SIGNING_IDENTITY" --identifier "$bundle_id" "$app_path"
+        --sign "$signing_identity" --identifier "$bundle_id" "$app_path"
 else
     # Keep the certificate stable across builds without changing trust settings.
     signing_dir="${DOGEAR_SIGNING_DIRECTORY:-$HOME/Library/Application Support/DogearDevelopmentSigning}"

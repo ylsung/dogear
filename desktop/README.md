@@ -12,11 +12,19 @@ cd desktop
 open dist/Dogear.app
 ```
 
-The build script signs the complete bundle with a persistent local development
+When exactly one Developer ID Application identity is installed, the build
+script signs with it, so local builds share the release's identity. Otherwise it
+signs the complete bundle with a persistent local development
 certificate stored in `~/Library/Application Support/DogearDevelopmentSigning`.
 Keep that directory across rebuilds: it preserves the identity macOS authorizes.
 Alternatively, set `DOGEAR_SIGNING_IDENTITY` to an installed code-signing identity
-and use the same certificate on subsequent builds. The local signing helper uses
+and use the same certificate on subsequent builds.
+macOS keeps one Screen Recording and Accessibility approval per bundle ID and
+ties it to the signer of whichever copy System Settings resolves. Keep every
+copy of `Dogear.app` on one machine signed by the same certificate (other
+worktrees' `dist` folders and mounted DMGs included); otherwise turning Dogear on
+can approve another copy and leave the running one denied. The permission
+notices name any such copy. The local signing helper uses
 OpenSSL 3 and a dedicated keychain; it temporarily adds that keychain to the user
 search list while signing, then restores the list. It does not change certificate
 trust settings. Do not share the generated private key or keychain password.
@@ -52,7 +60,10 @@ or permission-change notification for this API.
 Screen-region capture may also require **Screen Recording** permission.
 Dogear requests it on the first region capture and shows a centered recovery
 notice if macOS still reports it as unavailable. Wallpaper-only captures mean
-macOS is hiding application windows. Choose **Set Up Access Again** in that
+macOS is hiding application windows. **Open Settings** in the notice first asks
+macOS for access, so Dogear is always listed there to turn on; you never add it
+by path. If Dogear is already on but captures stay wallpaper-only, choose
+**Set Up Access Again** in that
 notice to reset only Dogear's Screen Recording approval, allow Dogear in the
 Settings window, and restart Dogear if macOS asks you to. Before showing the
 crosshair, Dogear brings the captured source app back to the front.
