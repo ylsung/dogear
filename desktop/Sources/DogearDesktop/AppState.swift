@@ -12,6 +12,8 @@ final class AppState: ObservableObject {
     @Published var accessibilityRecoveryError: String?
     @Published var showScreenRecordingNotice = false
     @Published var screenRecordingRecoveryError: String?
+    /// Differently signed copies that can take this copy's permission approvals.
+    @Published var conflictingAppCopies: [URL] = []
     @Published var preferChromeExtension: Bool {
         didSet { defaults.set(preferChromeExtension, forKey: "preferChromeExtension") }
     }

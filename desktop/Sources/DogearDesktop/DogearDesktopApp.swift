@@ -9,6 +9,15 @@ struct DogearDesktopApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
+        if CommandLine.arguments.contains(AppDelegate.screenRecordingRequestFlag) {
+            // macOS adds Dogear to the Settings list only for a request from a
+            // running app, so check in as one (hidden, without a Dock icon) first.
+            NSApplication.shared.setActivationPolicy(.accessory)
+            NSApplication.shared.finishLaunching()
+            _ = CGRequestScreenCaptureAccess()
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 1.5))
+            exit(0)
+        }
         DogearTypography.registerBundledFonts()
         guard let flag = CommandLine.arguments.firstIndex(of: "--editor-self-test") else { return }
         let path = CommandLine.arguments.indices.contains(flag + 1)
@@ -111,6 +120,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastExternalContext: FrontmostContext?
     private var permissionRepair: Process?
     private var screenPermissionRepair: Process?
+    private var waitingForPermissionAlert = false
+    private var screenRecordingRequestedHere = false
+    private var screenRecordingHelperRunning = false
     private var restarting = false
     private var composerPanel: NSPanel?
     private var exportPanel: NSPanel?
@@ -427,6 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
         let shouldPrompt = !state.showAccessibilityNotice
+        state.conflictingAppCopies = AppIdentity.differentlySignedCopies()
         state.showAccessibilityNotice = true
         showWindow()
         // The system prompt is asynchronous. Keep the actionable in-app notice
@@ -439,6 +452,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func openAccessibilitySettings() {
+        // As for Screen Recording: ask first so Dogear is listed to turn on.
+        AppIdentity.registerSelf()
+        if !AXIsProcessTrusted() {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
 
@@ -453,14 +472,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
         let shouldPrompt = !state.showScreenRecordingNotice
+        state.conflictingAppCopies = AppIdentity.differentlySignedCopies()
         state.showScreenRecordingNotice = true
         showWindow()
-        if shouldPrompt { _ = CGRequestScreenCaptureAccess() }
+        if shouldPrompt { requestScreenRecordingListing() }
         return false
     }
 
+    static let screenRecordingRequestFlag = "--request-screen-recording"
+
+    /// Asks macOS for Screen Recording, which also lists Dogear in Settings.
+    private func requestScreenRecordingListing(then completion: (() -> Void)? = nil) {
+        // While macOS still shows its alert from an earlier request, it ignores
+        // new ones, so a reset Dogear would stay unlisted. Ask once it closes.
+        if AppIdentity.permissionAlertIsShowing() {
+            guard !waitingForPermissionAlert else { return }
+            waitingForPermissionAlert = true
+            state.status = "Close macOS’s Screen Recording alert to continue."
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.waitingForPermissionAlert = false
+                self?.requestScreenRecordingListing(then: completion)
+            }
+            return
+        }
+        guard screenRecordingRequestedHere else {
+            screenRecordingRequestedHere = true
+            _ = CGRequestScreenCaptureAccess()
+            completion?()
+            return
+        }
+        launchScreenRecordingHelper(then: completion)
+    }
+
+    /// CoreGraphics asks macOS only once per process, so after Set Up Access
+    /// Again resets the approval, another request from this process does nothing
+    /// and Dogear stays missing from the Settings list. A brief, hidden second
+    /// launch of this same copy asks afresh, under its signature. It must be
+    /// launched as an app of its own, not as a child process: macOS lists the app
+    /// only when the asking process is responsible for itself.
+    private func launchScreenRecordingHelper(then completion: (() -> Void)?) {
+        guard !screenRecordingHelperRunning else { completion?(); return }
+        screenRecordingHelperRunning = true
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.activates = false
+        configuration.addsToRecentItems = false
+        configuration.arguments = [Self.screenRecordingRequestFlag]
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { [weak self] _, _ in
+            Task { @MainActor in
+                // The helper asks as soon as it starts; give macOS a moment to list Dogear.
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                self?.screenRecordingHelperRunning = false
+                completion?()
+            }
+        }
+    }
+
     func openScreenRecordingSettings() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+        // Settings lists only apps that have asked. Ask first so Dogear is always
+        // there to turn on, with this copy's signature, and the user never has to
+        // add it by path. Once listed, macOS does not prompt again.
+        AppIdentity.registerSelf()
+        let open = {
+            _ = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
+        }
+        if CGPreflightScreenCaptureAccess() { open() } else { requestScreenRecordingListing(then: open) }
     }
 
     func refreshScreenRecording() {
@@ -474,6 +550,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func repairScreenRecording() {
         guard screenPermissionRepair == nil else { return }
+        AppIdentity.registerSelf()
+        state.conflictingAppCopies = AppIdentity.differentlySignedCopies()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
         process.arguments = ["reset", "ScreenCapture", "com.ylsung.dogear.desktop"]
@@ -487,7 +565,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if succeeded {
                     self.state.screenRecordingRecoveryError = nil
                     self.state.status = "Screen Recording setup reset. Turn on Dogear in System Settings."
-                    _ = CGRequestScreenCaptureAccess()
                     self.openScreenRecordingSettings()
                 } else {
                     self.state.screenRecordingRecoveryError = "macOS could not reset Dogear’s Screen Recording access. Turn Dogear off and back on in Settings, then restart Dogear."
@@ -515,6 +592,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func repairAccessibility() {
         guard permissionRepair == nil else { return }
+        AppIdentity.registerSelf()
+        state.conflictingAppCopies = AppIdentity.differentlySignedCopies()
         // Reset only Dogear, never the permissions of other applications.
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
@@ -529,8 +608,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if succeeded {
                     self.state.accessibilityRecoveryError = nil
                     self.state.status = "Access setup reset. Turn on Dogear in System Settings."
-                    let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-                    _ = AXIsProcessTrustedWithOptions(options)
                     self.openAccessibilitySettings()
                 } else {
                     self.state.accessibilityRecoveryError = "macOS could not reset Dogear access. Open Settings, turn Dogear off and back on, then restart Dogear."

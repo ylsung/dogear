@@ -80,7 +80,7 @@ struct ContentView: View {
                 permissionNotice(
                     title: "Dogear needs Screen Recording access",
                     detail: "Without it, macOS gives Dogear the desktop wallpaper but hides app windows from region captures.",
-                    instruction: "Turn on Dogear in System Settings → Privacy & Security → Screen & System Audio Recording. If it is already on but windows are still hidden, choose Set Up Access Again.",
+                    instruction: "Choose Open Settings, turn on Dogear, then restart Dogear when macOS asks. If Dogear is already on but windows are still hidden, choose Set Up Access Again.",
                     repair: repairScreenRecording,
                     error: state.screenRecordingRecoveryError,
                     dismiss: { state.showScreenRecordingNotice = false },
@@ -96,6 +96,7 @@ struct ContentView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text("Turn on Dogear in System Settings → Privacy & Security → Accessibility. If it is already on but capture still fails, choose Set Up Access Again, then turn on Dogear when Settings opens.")
                             .font(DogearTypography.callout).fixedSize(horizontal: false, vertical: true)
+                        conflictingCopiesWarning
                         Button("Set Up Access Again", action: repairAccessibility)
                         Text("This resets only Dogear’s Accessibility permission. You’ll need to allow access again.")
                             .font(DogearTypography.caption).foregroundStyle(DogearTheme.textMuted)
@@ -152,6 +153,7 @@ struct ContentView: View {
                 Label(title, systemImage: "exclamationmark.triangle.fill").font(DogearTypography.headline).foregroundStyle(DogearTheme.danger)
                 Text(detail).fixedSize(horizontal: false, vertical: true)
                 Text(instruction).font(DogearTypography.callout).fixedSize(horizontal: false, vertical: true)
+                conflictingCopiesWarning
                 Button("Set Up Access Again", action: repair)
                 Text("This resets only Dogear’s permission. You’ll need to allow it again.")
                     .font(DogearTypography.caption).foregroundStyle(DogearTheme.textMuted)
@@ -167,6 +169,23 @@ struct ContentView: View {
             .background(DogearTheme.panel, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(DogearTheme.danger))
             .padding(16)
+        }
+    }
+
+    /// Approvals follow one signature per bundle ID, so another copy signed
+    /// differently can keep this one denied however often access is granted.
+    @ViewBuilder private var conflictingCopiesWarning: some View {
+        if !state.conflictingAppCopies.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Another copy of Dogear is signed differently, and macOS may give it this copy’s access. Move it to the Trash, then choose Set Up Access Again.")
+                    .font(DogearTypography.callout).foregroundStyle(DogearTheme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(state.conflictingAppCopies, id: \.self) { url in
+                    Text(url.path).font(DogearTypography.caption).foregroundStyle(DogearTheme.textMuted)
+                        .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                }
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting(state.conflictingAppCopies) }
+            }
         }
     }
 
